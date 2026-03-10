@@ -1,5 +1,5 @@
 from config.config import Config
-import wrds
+import wrds  # pyright: ignore[reportMissingImports]
 import pandas as pd
 import numpy as np
 import yaml
