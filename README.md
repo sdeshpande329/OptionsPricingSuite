@@ -34,6 +34,8 @@ OptionsPricingSuite
 │   │   ├── raw_rate_data.csv
 │   │   └── raw_spot_data.csv
 │   └── results
+├── docs                                 # Documentation submitted for a grade
+│   └── Literature Review.pdf
 ├── notebooks                            # Notebooks for exploratory purposes
 │   └── data_download.ipynb
 ├── scripts                              # Scripts for running individual steps of the process
