@@ -21,7 +21,7 @@ class Config:
     MIN_IMPLIED_VOLATILITY = 0.1 # Minimum implied volatility required for the option to be considered
     MAX_IMPLIED_VOLATILITY = 0.5 # Maximum implied volatility required for the option to be considered
     MIN_OPTION_PRICE = 0.01 # Minimum option price required for the option to be considered
-    MAX_MONEYNESS = 0.5 # Maximum moneyness required for the option to be considered (log-moneyness = ln(strike/spot))
+    MAX_MONEYNESS = 1.0 # Maximum moneyness required for the option to be considered (log-moneyness = ln(strike/spot))
 
     # Output Parameters
     OUTPUT_DIR = 'data/options_metrics_raw'
