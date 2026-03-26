@@ -41,7 +41,7 @@ OptionsPricingSuite
 ├── scripts                              # Scripts for running individual steps of the process
 │   └── download_data.py
 ├── src                                  # Process workflow
-│   ├── data
+│   ├── data                             ## Code for pulling data from OptionsMetrics through Wharton Research Data Services (WRDS)
 │   │   ├── __init__.py
 │   │   └── data_downloader.py
 │   └── __init__.py
