@@ -155,23 +155,143 @@ class ADISolver:
 
         return V_next
 
-    def modified_craig_sneyd_scheme(self):
+    def modified_craig_sneyd_scheme(self, V_n: np.ndarray, params:Dict) -> np.ndarray:
         """
         The MCS scheme modifies the standard Craig-Sneyd by adjusting how the mixed derivative correction is applied. 
         It uses a different splitting that improves stability properties while maintaining accuracy. Second-order accurate in time O(Δt²) and second-order accurate in space O(Δx², Δy²) with total accuracy O(Δt², Δx², Δy²). 
         Unconditionally stable. Enhanced stability compared to standard Craig-Sneyd. Better damping of high-frequency errors. Particularly stable for large time steps. Excellent performance with strong correlation.
         """
-        pass
+        N_v, N_S = V_n.shape
 
+        V_bar = np.zeros_like(V_n)
+        V_star = np.zeros_like(V_n)
+        V_tilde = np.zeros_like(V_n)
+        V_next = np.zeros_like(V_n)
 
-    def hundsdorfer_verwer_scheme(self):
+        # S-direction sweep
+        for j in range(1, N_v - 1):
+            v_j = self.v[j]
+            lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
+            rhs = self._build_rhs_modified_craig_sneyd_step_1(V_n, j, v_j, params)
+            V_bar[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
+
+        # Copy boundary conditions from V_n to V_bar
+        V_bar[0, :] = V_n[0, :]
+        V_bar[-1, :] = V_n[-1, :]
+        V_bar[:, 0] = V_n[:, 0]
+        V_bar[:, -1] = V_n[:, -1]
+
+        # v-direction sweep
+        for i in range(1, N_S - 1):
+            S_i = self.S[i]
+            lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
+            rhs = self._build_rhs_modified_craig_sneyd_step_2(V_bar, i, S_i, params)
+            V_star[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
+
+        # Copy boundary conditions from V_bar to V_star
+        V_star[0, :] = V_bar[0, :]
+        V_star[-1, :] = V_bar[-1, :]
+        V_star[:, 0] = V_bar[:, 0]
+        V_star[:, -1] = V_bar[:, -1]
+
+        # S-direction correction
+        for j in range(1, N_v - 1):
+            v_j = self.v[j]
+            lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
+            rhs = self._build_rhs_modified_craig_sneyd_step_3(V_star, V_n, j, v_j, params)
+            V_tilde[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
+
+        # Copy boundary conditions from V_star to V_tilde
+        V_tilde[0, :] = V_star[0, :]
+        V_tilde[-1, :] = V_star[-1, :]
+        V_tilde[:, 0] = V_star[:, 0]
+        V_tilde[:, -1] = V_star[:, -1]
+
+        # v-direction correction
+        for i in range(1, N_S - 1):
+            S_i = self.S[i]
+            lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
+            rhs = self._build_rhs_modified_craig_sneyd_step_4(V_tilde, V_star, i, S_i, params)
+            V_next[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
+
+        # Copy boundary conditions from V_tilde to V_next
+        V_next[0, :] = V_tilde[0, :]
+        V_next[-1, :] = V_tilde[-1, :]
+        V_next[:, 0] = V_tilde[:, 0]
+        V_next[:, -1] = V_tilde[:, -1]
+
+        return V_next
+
+    def hundsdorfer_verwer_scheme(self, V_n: np.ndarray, params:Dict) -> np.ndarray:
         """
         The Hundsdorfer-Verwer scheme is a sophisticated ADI method that combines features of Craig-Sneyd with additional correction terms. It achieves excellent accuracy for mixed derivatives through a carefully constructed multi-stage process. 
         Second-order accurate in time O(Δt²) and second-order accurate in space O(Δx², Δy²) with total accuracy O(Δt², Δx², Δy²). 
         Best accuracy among ADI schemes for mixed derivative problems. Smallest error constants (lowest actual errors for given Δt, Δx, Δy). 
         Unconditionally stable. Excellent stability properties for all correlation values. Superior damping of oscillations. Most robust ADI scheme for difficult problems.
         """
-        pass
+        gamma, alpha, beta = 0.5, 0.5, 0.5 # Optimal values pulled from Hundsdorfer and Verwer 1997
+
+        N_v, N_S = V_n.shape
+
+        V_bar = np.zeros_like(V_n)
+        V_star = np.zeros_like(V_n)
+        V_tilde = np.zeros_like(V_n)
+        V_next = np.zeros_like(V_n)
+
+        # S-direction sweep
+        for j in range(1, N_v - 1):
+            v_j = self.v[j]
+            lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
+            rhs = self._build_rhs_HV_step_1(V_n, j, v_j, params, gamma)
+            V_bar[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
+
+        # Copy boundary conditions from V_n to V_bar
+        V_bar[0, :] = V_n[0, :]
+        V_bar[-1, :] = V_n[-1, :]
+        V_bar[:, 0] = V_n[:, 0]
+        V_bar[:, -1] = V_n[:, -1]
+
+        # v-direction sweep
+        for i in range(1, N_S - 1):
+            S_i = self.S[i]
+            lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
+            rhs = self._build_rhs_HV_step_2(V_bar, i, S_i, params, gamma)
+            V_star[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
+
+        # Copy boundary conditions from V_bar to V_star
+        V_star[0, :] = V_bar[0, :]
+        V_star[-1, :] = V_bar[-1, :]
+        V_star[:, 0] = V_bar[:, 0]
+        V_star[:, -1] = V_bar[:, -1]
+
+        # S-direction correction
+        for j in range(1, N_v - 1):
+            v_j = self.v[j]
+            lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
+            rhs = self._build_rhs_HV_step_3(V_star, V_bar, j, v_j, params, alpha)
+            V_tilde[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
+
+        # Copy boundary conditions from V_star to V_tilde
+        V_tilde[0, :] = V_star[0, :]
+        V_tilde[-1, :] = V_star[-1, :]
+        V_tilde[:, 0] = V_star[:, 0]
+        V_tilde[:, -1] = V_star[:, -1]
+
+        # v-direction correction
+        for i in range(1, N_S - 1):
+            S_i = self.S[i]
+            lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
+            rhs = self._build_rhs_HV_step_4(V_tilde, V_star, i, S_i, params, beta)
+            V_next[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
+
+        # Copy boundary conditions from V_tilde to V_next
+        V_next[0, :] = V_tilde[0, :]
+        V_next[-1, :] = V_tilde[-1, :]
+        V_next[:, 0] = V_tilde[:, 0]
+        V_next[:, -1] = V_tilde[:, -1]
+
+        return V_next
+
 
     # Helper Functions
 
