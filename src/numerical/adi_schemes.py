@@ -347,3 +347,180 @@ class ADISolver:
             rhs[idx] = V_tilde[j, i]
 
         return rhs
+
+    def _build_rhs_modified_craig_sneyd_step_1(self, V_n: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
+        """Builds the right-hand side for the first step of Modified Craig-Sneyd scheme."""
+        r = params['r']
+        q = params.get('q', 0.0)
+        kappa = params['kappa']
+        theta_v = params['theta']
+        xi = params['xi']
+
+        N = self.N_S - 2
+        rhs = np.zeros(N)
+
+        for idx in range(N):
+            i = idx + 1
+            S_i = self.S[i]
+
+            alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
+            beta_S = (r - q) * S_i / (2 * self.dS)
+            L_S_explicit = (1-self.theta) * self.dt * (
+                alpha_S * (V_n[j, i+1] - 2 * V_n[j, i] + V_n[j, i-1]) + beta_S * (V_n[j, i+1] - V_n[j, i-1])
+            )
+
+            alpha_v = 0.5 * xi**2 * v_j / self.dv**2
+            beta_v = kappa * (theta_v - v_j) / (2 * self.dv)
+
+            L_v_explicit = self.dt * (
+                alpha_v * (V_n[j+1, i] - 2*V_n[j,i] + V_n[j-1, i]) + beta_v * (V_n[j+1, i] - V_n[j-1, i])
+            )
+
+            # Mixed derivative correction
+            L_Sv = self.dt * self._apply_mixed_derivative_correction(V_n, j, i, params)
+
+            reaction_term = -self.dt * r * V_n[j,i]
+
+            # Reaction term
+            rhs[idx] = V_n[j, i] + L_S_explicit + L_v_explicit + L_Sv + reaction_term
+
+        return rhs
+
+    def _build_rhs_modified_craig_sneyd_step_2(self, V_bar: np.ndarray, i: int, S_i: float, params:Dict) -> np.ndarray:
+        """Builds the right-hand side for the second step of Modified Craig-Sneyd scheme."""
+        r = params['r']
+        q = params.get('q', 0.0)
+        
+        N = self.N_v - 2
+        rhs = np.zeros(N)
+        
+        for idx in range(N):
+            j = idx + 1
+            v_j = self.v[j]
+
+            alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
+            beta_S = (r-q) *S_i/(2*self.dS)
+            L_S_explicit = (1-self.theta) * self.dt * (
+                alpha_S * (V_bar[j, i+1] - 2 * V_bar[j, i] + V_bar[j, i-1]) + beta_S * (V_bar[j, i+1] - V_bar[j, i-1])
+            )
+
+            L_Sv_term = 0.5 * self.dt * self._apply_mixed_derivative_correction(V_bar, j, i, params)
+
+            rhs[idx] = V_bar[j, i] + L_S_explicit + L_Sv_term
+
+        return rhs
+
+    def _build_rhs_modified_craig_sneyd_step_3(self, V_star:np.ndarray, V_bar: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
+        """Builds the right-hand side for the third step of Modified Craig-Sneyd scheme."""
+        N = self.N_v - 2
+        rhs = np.zeros(N)
+
+        for idx in range(N):
+            i = idx + 1
+
+            L_Sv_star = self._apply_mixed_derivative_correction(V_star, j, i, params)
+            L_Sv_bar = self._apply_mixed_derivative_correction(V_bar, j, i, params)
+
+            correction_term = self.dt * (L_Sv_star - 0.5 * L_Sv_bar)
+
+            rhs[idx] = V_star[j, i] + correction_term
+
+        return rhs
+
+    def _build_rhs_modified_craig_sneyd_step_4(self, V_tilde:np.ndarray, V_star: np.ndarray, i:int, S_i:float, params:Dict) -> np.ndarray:
+        """Builds the right-hand side for the fourth step of Modified Craig-Sneyd scheme."""
+        N = self.N_v - 2
+        rhs = np.zeros(N)
+        
+        for idx in range(N):
+            j = idx + 1
+            rhs[idx] = V_tilde[j, i]
+
+        return rhs
+
+    def _build_rhs_HV_step_1(self, V_n: np.ndarray, j:int, v_j:float, params: Dict, gamma:float) -> np.ndarray:
+        """Builds the right-hand side for the first step of Hundsdorfer-Verwer scheme."""
+        r = params['r']
+        q = params.get('q', 0.0)
+        kappa = params['kappa']
+        theta_v = params['theta']
+        xi = params['xi']
+
+        N = self.N_S - 2
+        rhs = np.zeros(N)
+        
+        for idx in range(N):
+            i = idx + 1
+            S_i = self.S[i]
+
+            alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
+            beta_S = (r - q) * S_i / (2 * self.dS)
+            L_S_explicit = (1-self.theta) * self.dt * (
+                alpha_S * (V_n[j, i+1] - 2 * V_n[j, i] + V_n[j, i-1]) + beta_S * (V_n[j, i+1] - V_n[j, i-1])
+            )
+
+            alpha_v = 0.5 * xi**2 * v_j / self.dv**2
+            beta_v = kappa * (theta_v - v_j) / (2 * self.dv)
+
+            L_v_explicit = self.dt * (
+                alpha_v * (V_n[j+1, i] - 2*V_n[j,i] + V_n[j-1, i]) + beta_v * (V_n[j+1, i] - V_n[j-1, i])
+            )
+
+            L_Sv_term = gamma * self.dt * self._apply_mixed_derivative_correction(V_n, j, i, params)
+
+            reaction_term = -self.dt * r * V_n[j,i]
+
+            rhs[idx] = V_n[j, i] + L_S_explicit + L_v_explicit + L_Sv_term + reaction_term
+
+        return rhs
+
+    def _build_rhs_HV_step_2(self, V_star: np.ndarray, i: int, S_i: float, params:Dict, gamma:float) -> np.ndarray:
+        """Builds the right-hand side for the second step of Hundsdorfer-Verwer scheme."""
+        r = params['r']
+        q = params.get('q', 0.0)
+        
+        N = self.N_v - 2
+        rhs = np.zeros(N)
+
+        for idx in range(N):
+            j = idx + 1
+            v_j = self.v[j]
+
+            alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
+            beta_S = (r-q) *S_i/(2*self.dS)
+            L_S_explicit = (1-self.theta) * self.dt * (
+                alpha_S * (V_star[j, i+1] - 2 * V_star[j, i] + V_star[j, i-1]) + beta_S * (V_star[j, i+1] - V_star[j, i-1])
+            )
+
+            L_Sv_term = gamma * self.dt * self._apply_mixed_derivative_correction(V_star, j, i, params)
+            rhs[idx] = V_star[j, i] + L_S_explicit + L_Sv_term
+
+        return rhs
+
+    def _build_rhs_HV_step_3(self, V_star: np.ndarray, V_bar: np.ndarray, j:int, v_j:float, params: Dict, alpha:float) -> np.ndarray:
+        """Builds the right-hand side for the third step of Hundsdorfer-Verwer scheme."""
+        N = self.N_v - 2
+        rhs = np.zeros(N)
+
+        for idx in range(N):
+            i = idx + 1
+
+            L_Sv_star = self._apply_mixed_derivative_correction(V_star, j, i, params)
+            L_Sv_bar = self._apply_mixed_derivative_correction(V_bar, j, i, params)
+            
+            correction_term = self.dt * (L_Sv_star - alpha * L_Sv_bar)
+
+            rhs[idx] = V_star[j, i] + correction_term
+
+        return rhs
+
+    def _build_rhs_HV_step_4(self, V_tilde:np.ndarray, V_star: np.ndarray, i:int, S_i:float, params:Dict, alpha:float) -> np.ndarray:
+        """Builds the right-hand side for the fourth step of Hundsdorfer-Verwer scheme."""
+        N = self.N_v - 2
+        rhs = np.zeros(N)
+        
+        for idx in range(N):
+            j = idx + 1
+            rhs[idx] = V_tilde[j, i]
+
+        return rhs
