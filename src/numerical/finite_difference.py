@@ -84,6 +84,7 @@ class FiniteDifferenceSolver:
         """Single backward time step using the explicit scheme."""
         r = params["r"] # interest rate
         sigma = params["sigma"] # volatility
+        q = params.get("q", 0.0) # dividend yield (default to 0)
 
         V_next = np.zeros_like(V_n)
 
@@ -98,7 +99,7 @@ class FiniteDifferenceSolver:
             diffusion = 0.5 * sigma**2 * S_i**2 * (V_n[i + 1] - 2.0 * V_n[i] + V_n[i - 1]) / (self.dS**2)
 
             # convection term of Black-Scholes PDE (uses standard centered difference formula):
-            convection = r * S_i * (V_n[i + 1] - V_n[i - 1]) / (2.0 * self.dS)
+            convection = (r - q) * S_i * (V_n[i + 1] - V_n[i - 1]) / (2.0 * self.dS)
 
             # reaction term of the Black-Scholes PDE:
             reaction = -r * V_n[i]
