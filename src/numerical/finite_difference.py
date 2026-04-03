@@ -11,15 +11,17 @@ class FiniteDifferenceSolver:
     Supported schemes: explicit, implicit, crank_nicolson
     """
 
-    def __init__(self, scheme: str):
+    def __init__(self, scheme: str, theta_cn: float = 0.5):
         valid_schemes = {"explicit", "implicit", "crank_nicolson"}
         if scheme not in valid_schemes:
             raise ValueError(f"scheme must be one of {valid_schemes}, got {scheme}")
+        if not (0.0 <= theta_cn <= 1.0):
+            raise ValueError(f"theta_cn must be between 0 and 1, got {theta_cn}")
 
         self.scheme = scheme
         
         # Crank-Nicolson theta weight:
-        self.theta_cn = 0.5 # default theta = 0.5; theta = 1 is implicit scheme
+        self.theta_cn = theta_cn # default theta = 0.5; theta = 1 is implicit scheme
 
         # placeholders for stock grid and time grid:
         self.S = None
