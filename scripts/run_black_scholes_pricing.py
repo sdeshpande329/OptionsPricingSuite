@@ -43,7 +43,7 @@ def choose_grid_bounds(spot: float, strike: float, r: float, q: float, sigma: fl
 
     return s_min, s_max
 
-def price_row(row: pd.Series, scheme: str, theta_cn: float, n_s: int, n_t: int, rate_col: str) -> dict:
+def price_row(row: pd.Series, scheme: str, theta_cn: float, n_s: int, n_t: int) -> dict:
     """Price one contract (data row) with the Black-Scholes model wrapper."""
     # needed contract inputs/parameters:
     spot = float(row["spot_price"])
