@@ -11,10 +11,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src.models.black_scholes import BlackScholesModel, BlackScholesParams, EuropeanOption
+from src.models.merton_jump_diffusion import MertonJumpDiffusionModel, MertonJumpParams, EuropeanOption
 
 DATA_PATH = REPO_ROOT / "data" / "options_metrics_processed" / "clean_options_data.csv"
 RESULTS_DIR = REPO_ROOT / "data" / "results"
+
+IMEX_SCHEME = "imex_euler"
+
+# First-pass Merton parameters. These should eventually come from calibration or literature.
+LAMBDA_JUMP = 0.01
+JUMP_MEAN = -0.005
+JUMP_STD = 0.03
 
 # retrieving the option type and change to format used in Black-Scholes PDE code:
 def infer_option_type(cp_flag: str) -> str:
@@ -46,8 +53,8 @@ def choose_grid_bounds(spot: float, strike: float, r: float, q: float, sigma: fl
 
     return s_min, s_max
 
-def price_row(row: pd.Series, scheme: str, theta_cn: float, n_s: int, n_t: int) -> dict:
-    """Price one contract (data row) with the Black-Scholes model wrapper."""
+def price_row(row: pd.Series, scheme: str, n_s: int, n_t: int) -> dict:
+    """Price one contract (data row) with the Merton jump-diffusion model wrapper."""
     # needed contract inputs/parameters:
     spot = float(row["spot_price"])
     strike = float(row["strike_price"])
@@ -58,14 +65,21 @@ def price_row(row: pd.Series, scheme: str, theta_cn: float, n_s: int, n_t: int) 
     sigma = float(row["impl_volatility"])
 
     # building model parameters, option contract, and model wrapper:
-    bs_params = BlackScholesParams(r=r, sigma=sigma, q=0.0)
+    merton_params = MertonJumpParams(
+        r=r,
+        sigma=sigma,
+        q=0.0,
+        lambda_jump=LAMBDA_JUMP,
+        jump_mean=JUMP_MEAN,
+        jump_std=JUMP_STD,
+    )
     contract = EuropeanOption(K=strike, T=tau, option_type=option_type)
-    model = BlackScholesModel(bs_params)
+    model = MertonJumpDiffusionModel(merton_params)
 
     # PDE stock-price domain:
     s_min, s_max = choose_grid_bounds(spot=spot, strike=strike, r=r, q=0.0, sigma=sigma, tau=tau, n_std=4.0)
 
-    # run the Black-Scholes numerical pricing:
+    # run the Merton jump-diffusion numerical pricing:
     model_price = model.price(
         contract=contract,
         spot=spot,
@@ -74,7 +88,6 @@ def price_row(row: pd.Series, scheme: str, theta_cn: float, n_s: int, n_t: int) 
         S_max=s_max,
         N_S=n_s,
         N_t=n_t,
-        theta_cn=theta_cn,
     )
 
     # computing the pricing errors:
@@ -91,31 +104,17 @@ def price_row(row: pd.Series, scheme: str, theta_cn: float, n_s: int, n_t: int) 
         "tau (time to maturity)": tau,
         "market_mid_price": market_price,
         "model_price": model_price,
+        "scheme": scheme,
+        "lambda_jump": LAMBDA_JUMP,
+        "jump_mean": JUMP_MEAN,
+        "jump_std": JUMP_STD,
         "abs_error": abs_error,
         "sq_error": sq_error,
     }
 
-def check_common_grid_explicit_stability(spot: float, strike: float, r: float, q: float, sigma: float, tau: float, n_s: int,
-    n_t: int, n_std: float = 4.0) -> None:
-    """Check chosen grid is stable for explicit scheme. All schemes are evaluated under the same parameters for consistency."""
-    s_min, s_max = choose_grid_bounds(spot=spot, strike=strike, r=r, q=q, sigma=sigma, tau=tau, n_std=n_std)
-
-    dS = (s_max - s_min) / (n_s - 1)
-    dt = tau / (n_t - 1)
-
-    # stability formula (derived from von Neumann and Eurler's formula):
-    stability_value = dt * sigma**2 * s_max**2 / (dS**2)
-
-    if stability_value > 1.0:
-        raise ValueError(
-            "Chosen common grid is not stable for the explicit scheme. "
-            f"Computed stability value = {stability_value:.6f}, which exceeds 1.0. "
-            "Choose a finer time grid (increase n_t) or a coarser stock grid (decrease n_s)."
-        )
-
-def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, n_t: int = 2500,
+def main(scheme: str = IMEX_SCHEME, n_s: int = 200, n_t: int = 2500,
     max_rows: Optional[int] = 25) -> None:
-    """Run Black-Scholes pricing on cleaned OptionMetrics data and save results. """
+    """Run Merton jump-diffusion PIDE pricing on cleaned OptionMetrics data and save results."""
     # checks that the cleaned data CSV exists before attempting to read:
     if not DATA_PATH.exists():
         raise FileNotFoundError(f"Could not find processed data file: {DATA_PATH}")
@@ -125,18 +124,6 @@ def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, 
     if max_rows is not None:
         df = df.head(max_rows).copy()
 
-    # ensure the chosen common grid is also stable for explicit
-    if len(df) > 0:
-        first_row = df.iloc[0]
-
-        spot = float(first_row["spot_price"])
-        strike = float(first_row["strike_price"])
-        tau = float(first_row["tau (time to maturity)"])
-        r = float(first_row["rate"]) / 100.0
-        sigma = float(first_row["impl_volatility"])
-
-        check_common_grid_explicit_stability(spot=spot, strike=strike, r=r, q=0.0, sigma=sigma, tau=tau, n_s=n_s, n_t=n_t, n_std=4.0)
-
     results = []
 
     # looping through each row (option contract):
@@ -145,7 +132,6 @@ def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, 
             priced = price_row(
                 row=row,
                 scheme=scheme,
-                theta_cn=theta_cn,
                 n_s=n_s,
                 n_t=n_t,
             )
@@ -162,7 +148,9 @@ def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, 
                     "tau (time to maturity)": row["tau (time to maturity)"],
                     "market_mid_price": row["mid_price"],
                     "scheme": scheme,
-                    "theta_cn": theta_cn,
+                    "lambda_jump": LAMBDA_JUMP,
+                    "jump_mean": JUMP_MEAN,
+                    "jump_std": JUMP_STD,
                     "N_S": n_s,
                     "N_t": n_t,
                     "error_message": str(exc),
@@ -173,7 +161,7 @@ def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, 
 
     # making sure the results directory exists and saves the CSV:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    results_path = RESULTS_DIR / f"black_scholes_pricing_results_{scheme}.csv"
+    results_path = RESULTS_DIR / f"merton_pide_pricing_results_{scheme}.csv"
     results_df.to_csv(results_path, index=False)
 
     # how many rows were priced successfully:
@@ -191,6 +179,5 @@ def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, 
 
 
 if __name__ == "__main__":
-    for scheme in ["explicit", "implicit", "crank_nicolson"]:
-        print(f"\nRunning scheme: {scheme}")
-        main(scheme=scheme, max_rows=None)
+    print(f"\nRunning Merton jump-diffusion PIDE with scheme: {IMEX_SCHEME}")
+    main(max_rows=None)
