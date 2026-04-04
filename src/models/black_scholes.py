@@ -3,7 +3,7 @@ from typing import Dict
 
 import numpy as np
 
-from numerical.finite_difference import FiniteDifferenceSolver
+from src.numerical.finite_difference import FiniteDifferenceSolver
 
 # store model parameters:
 @dataclass
