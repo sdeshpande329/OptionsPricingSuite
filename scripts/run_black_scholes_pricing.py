@@ -51,7 +51,7 @@ def price_row(row: pd.Series, scheme: str, theta_cn: float, n_s: int, n_t: int, 
     tau = float(row["tau (time to maturity)"])
     market_price = float(row["mid_price"])
     option_type = infer_option_type(row["cp_flag"])
-    r = float(row["rate"])
+    r = float(row["rate"]) / 100.0
     sigma = float(row["impl_volatility"])
 
     # building model parameters, option contract, and model wrapper:
@@ -110,7 +110,7 @@ def check_common_grid_explicit_stability(spot: float, strike: float, r: float, q
             "Choose a finer time grid (increase n_t) or a coarser stock grid (decrease n_s)."
         )
 
-def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, n_t: int = 200,
+def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, n_t: int = 2500,
     max_rows: Optional[int] = 25) -> None:
     """Run Black-Scholes pricing on cleaned OptionMetrics data and save results. """
     # checks that the cleaned data CSV exists before attempting to read:
@@ -129,7 +129,7 @@ def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, 
         spot = float(first_row["spot_price"])
         strike = float(first_row["strike_price"])
         tau = float(first_row["tau (time to maturity)"])
-        r = float(first_row["rate"])
+        r = float(row["rate"]) / 100.0
         sigma = float(first_row["impl_volatility"])
 
         check_common_grid_explicit_stability(spot=spot, strike=strike, r=r, q=0.0, sigma=sigma, tau=tau, n_s=n_s, n_t=n_t, n_std=4.0)
