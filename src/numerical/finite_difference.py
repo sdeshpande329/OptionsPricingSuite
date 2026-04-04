@@ -68,6 +68,10 @@ class FiniteDifferenceSolver:
         # terminal condition at maturity (payoff at each end stock price in grid):
         V[-1, :] = payoff(self.S)
 
+        # checking stability for explicit method:
+        if self.scheme == "explicit":
+            self._check_explicit_stability(params)
+
         # backward time stepping (from final time level to time = 0 [present]):
         for n in range(self.N_t - 1, 0, -1):
             # current time level:
@@ -334,6 +338,27 @@ class FiniteDifferenceSolver:
                 rhs[idx] += c_bc * V_bc[-1]
 
         return rhs
+    
+    def _check_explicit_stability(self, params: Dict[str, float]) -> None:
+        """
+        Check the stability condition for the explicit scheme.
+
+        A practical check derived from von Neumann and Euler's formula is: 
+            dt * sigma^2 * S_max^2 / dS^2 <= 1
+
+        If this is violated, the explicit scheme may become unstable.
+        """
+        sigma = params["sigma"] # volatility
+        S_max = self.S[-1]
+
+        stability_value = self.dt * sigma**2 * S_max**2 / (self.dS**2)
+
+        if stability_value > 1.0:
+            raise ValueError(
+                "Explicit scheme may be unstable with the current grid. "
+                f"Computed stability value = {stability_value:.6f}, which exceeds 1.0. "
+                "Try increasing N_t or decreasing N_S / enlarging the time resolution."
+            )
 
     def _check_grid_initialized(self) -> None:
         """
