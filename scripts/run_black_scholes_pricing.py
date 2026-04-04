@@ -129,7 +129,7 @@ def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, 
         spot = float(first_row["spot_price"])
         strike = float(first_row["strike_price"])
         tau = float(first_row["tau (time to maturity)"])
-        r = float(row["rate"]) / 100.0
+        r = float(first_row["rate"]) / 100.0
         sigma = float(first_row["impl_volatility"])
 
         check_common_grid_explicit_stability(spot=spot, strike=strike, r=r, q=0.0, sigma=sigma, tau=tau, n_s=n_s, n_t=n_t, n_std=4.0)
