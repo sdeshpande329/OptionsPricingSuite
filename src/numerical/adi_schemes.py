@@ -2,7 +2,7 @@
 
 import numpy as np
 from typing import Callable, Dict, Tuple
-from numerical.linear_solvers import *
+from .linear_solvers import *
 
 class ADISolver:
     def __init__(self, scheme: str, theta: float = 0.5):
@@ -16,16 +16,21 @@ class ADISolver:
         self.dt = None
 
     def setup_grid(self, S_min: float, S_max: float, N_S: int,
-                   v_min: float, v_max: float, N_v: int,
-                   T: float, N_t: int):
-        """Sets up the grid for the problem."""
+               v_min: float, v_max: float, N_v: int,
+               T: float, N_t: int):
+        """Create spatial and temporal grids for the ADI solver."""
         self.S = np.linspace(S_min, S_max, N_S)
         self.v = np.linspace(v_min, v_max, N_v)
         self.t = np.linspace(0, T, N_t)
-
-        self.dS = (self.S[1] - self.S[0]) / (N_S - 1)
-        self.dv = (self.v[1] - self.v[0]) / (N_v - 1)
-        self.dt = T/ (N_t - 1)
+        
+        self.dS = (S_max - S_min) / (N_S - 1)
+        self.dv = (v_max - v_min) / (N_v - 1)
+        self.dt = T / (N_t - 1)
+        
+        # ADD THESE THREE LINES:
+        self.N_S = N_S
+        self.N_v = N_v
+        self.N_t = N_t
 
     def solve(self, payoff: Callable, params: Dict[str, float]):
         """Solves the problem using the selected scheme."""
@@ -42,6 +47,8 @@ class ADISolver:
             step_method = self.modified_craig_sneyd_scheme
         elif self.scheme == 'hundsdorfer_verwer':
             step_method = self.hundsdorfer_verwer_scheme
+        else:
+            raise ValueError(f"Unsupported ADI scheme: {self.scheme}")
 
         for i in range(self.N_t - 1, 0, -1):
             V[i-1] = step_method(V[i], params)
@@ -64,7 +71,7 @@ class ADISolver:
         for j in range(1, N_v - 1):
             v_j = self.v[j]
             lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
-            rhs = self._build_rhs_douglas_step1(V_n, j, v_j, params)
+            rhs = self._build_rhs_douglas_step_1(V_n, j, v_j, params)
             V_star[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
         
         # Copy boundary conditions from V_n to V_star
@@ -77,7 +84,7 @@ class ADISolver:
         for i in range(1, N_S - 1):
             S_i = self.S[i]
             lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
-            rhs = self._build_rhs_douglas_step2(V_star, i, S_i, params)
+            rhs = self._build_rhs_douglas_step_2(V_star, i, S_i, params)
             V_next[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
 
         # Copy boundary conditions from V_star to V_next
@@ -349,7 +356,7 @@ class ADISolver:
             if idx > 0:
                 lower[idx - 1] = -self.theta * self.dt * (alpha - beta)
 
-            diag[idx] = 1 + self.theta * self.dt * (2 * alpha + kappa)
+            diag[idx] = 1 + self.theta * self.dt * (2 * alpha + r)  # CHANGED FROM +kappa to +r
 
             if idx < N - 1:
                 upper[idx] = -self.theta * self.dt * (alpha + beta)
@@ -375,7 +382,7 @@ class ADISolver:
         
         return L_Sv
         
-    def _build_rhs_douglass_step_1(self, V_n: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
+    def _build_rhs_douglas_step_1(self, V_n: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
         """Builds the right-hand side for the first step of Douglas scheme."""
         r = params['r']
         q = params.get('q', 0.0)
@@ -410,7 +417,7 @@ class ADISolver:
 
         return rhs
 
-    def _build_rhs_douglass_step_2(self, V_star: np.ndarray, i: int, S_i: float, params:Dict) -> np.ndarray:
+    def _build_rhs_douglas_step_2(self, V_star: np.ndarray, i: int, S_i: float, params:Dict) -> np.ndarray:
         """Builds the right-hand side for the second step of Douglas scheme."""
         r = params['r']
         q = params.get('q', 0.0)
@@ -434,15 +441,15 @@ class ADISolver:
 
     def _build_rhs_craig_sneyd_step_1(self, V_n: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
         """Builds the right-hand side for the first step of Craig-Sneyd scheme."""
-        return self._build_rhs_douglass_step_1(V_n, j, v_j, params)
+        return self._build_rhs_douglas_step_1(V_n, j, v_j, params)
 
     def _build_rhs_craig_sneyd_step_2(self, V_bar: np.ndarray, i: int, S_i: float, params:Dict) -> np.ndarray:
         """Builds the right-hand side for the second step of Craig-Sneyd scheme."""
-        return self._build_rhs_douglass_step_2(V_bar, i, S_i, params)
+        return self._build_rhs_douglas_step_2(V_bar, i, S_i, params)
 
     def _build_rhs_craig_sneyd_step_3(self, V_star: np.ndarray, V_n: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
         """Builds the right-hand side for the third step of Craig-Sneyd scheme."""
-        N = self.N_v - 2  # Interior points only
+        N = self.N_S - 2
         rhs = np.zeros(N)
         
         for idx in range(N):
@@ -532,7 +539,7 @@ class ADISolver:
 
     def _build_rhs_modified_craig_sneyd_step_3(self, V_star:np.ndarray, V_bar: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
         """Builds the right-hand side for the third step of Modified Craig-Sneyd scheme."""
-        N = self.N_v - 2
+        N = self.N_S - 2  # CHANGED FROM N_v - 2 (this is S-direction sweep!)
         rhs = np.zeros(N)
 
         for idx in range(N):
@@ -619,7 +626,7 @@ class ADISolver:
 
     def _build_rhs_HV_step_3(self, V_star: np.ndarray, V_bar: np.ndarray, j:int, v_j:float, params: Dict, alpha:float) -> np.ndarray:
         """Builds the right-hand side for the third step of Hundsdorfer-Verwer scheme."""
-        N = self.N_v - 2
+        N = self.N_S - 2  # CHANGED FROM N_v - 2 (this is S-direction sweep!)
         rhs = np.zeros(N)
 
         for idx in range(N):
