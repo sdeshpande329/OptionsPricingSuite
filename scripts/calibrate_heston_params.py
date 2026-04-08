@@ -69,9 +69,9 @@ class HestonCalibrator:
         self.q = q
         self.scheme = scheme
         self.grid_params = grid_params or {
-            'N_S': 60,   # Coarser for speed during calibration
-            'N_v': 30,
-            'N_t': 30
+            'N_S': 100,   # Coarser for speed during calibration
+            'N_v': 50,
+            'N_t': 50
         }
         
         self.market_data = None
