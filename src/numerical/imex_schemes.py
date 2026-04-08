@@ -1,7 +1,7 @@
 import numpy as np
 from typing import Callable, Dict, Tuple
 
-from numerical.linear_solvers import solve_tridiagonal
+from src.numerical.linear_solvers import solve_tridiagonal
 
 
 class IMEXSolver:
