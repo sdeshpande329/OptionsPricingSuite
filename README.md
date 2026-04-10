@@ -21,12 +21,11 @@ pip install --upgrade pip && pip install -r requirements.txt
 
 
 ## Repository Structure:
-
 ```sh
 OptionsPricingSuite
-├── config                               # Public configurations
+├── config
 │   └── config.py
-├── data                                 # Raw and processed data
+├── data
 │   ├── options_metrics_processed
 │   │   └── clean_options_data.csv
 │   ├── options_metrics_raw
@@ -34,26 +33,50 @@ OptionsPricingSuite
 │   │   ├── raw_rate_data.csv
 │   │   └── raw_spot_data.csv
 │   └── results
-├── docs                                 # Documentation submitted for a grade
+│       ├── black_scholes_pricing_results_crank_nicolson.csv
+│       ├── black_scholes_pricing_results_explicit.csv
+│       ├── black_scholes_pricing_results_implicit.csv
+│       ├── black_scholes_terminal_output.JPG
+│       ├── heston_calibrated_parameters.csv
+│       ├── heston_price_comparison.csv
+│       ├── heston_pricing_results_craig-sneyd.csv
+│       ├── heston_pricing_results_hv.csv
+│       ├── heston_pricing_results_mcs.csv
+│       ├── merton_jump_calibration_results.csv
+│       └── merton_pide_pricing_results_imex_euler.csv
+├── docs
+│   ├── reference_papers
+│   │   ├── A Finite Difference Scheme for Option Pricing in Jump Diffusion and Exponential Lévy Models.pdf
+│   │   ├── ADI finite difference schemes for option pricing in the Heston model with correlation.pdf
+│   │   └── Calibration of Heston.pdf
+│   ├── CSE 6730 Checkpoint 1.pdf
 │   └── Literature Review.pdf
-├── notebooks                            # Notebooks for exploratory purposes
+├── notebooks
 │   └── data_download.ipynb
-├── scripts                              # Scripts for running individual steps of the process
-│   └── download_data.py
+├── scripts
+│   ├── calibrate_heston_params.py
+│   ├── calibrate_merton_jump_params.py
+│   ├── download_data.py
+│   ├── run_black_scholes_pricing.py
+│   ├── run_heston_pricing.py
+│   └── run_merton_pide_pricing.py
 ├── src
-│   ├── data                             # Script to download data from OptionMetrics through WRDS
+│   ├── data
 │   │   ├── __init__.py
 │   │   └── data_downloader.py
-│   ├── numerical                        # Custom implementations of the numerical methods needed for financial models
+│   ├── models
+│   │   ├── __init__.py
+│   │   ├── black_scholes.py
+│   │   ├── heston.py
+│   │   └── merton_jump_diffusion.py
+│   ├── numerical
 │   │   ├── __init__.py
 │   │   ├── adi_schemes.py
 │   │   ├── finite_difference.py
 │   │   ├── imex_schemes.py
 │   │   └── linear_solvers.py
 │   └── __init__.py
-├── requirements.txt                     # Required packages
-├── README.md                            # Repository overview
-└── .gitignore                           # Files/File types that will not be tracked in repository
+└── requirements.txt
 ```
 
 ## AI Statement:
