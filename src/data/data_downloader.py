@@ -1,5 +1,5 @@
 from config.config import Config
-import wrds  # pyright: ignore[reportMissingImports]
+import wrds
 import pandas as pd
 import numpy as np
 import yaml
@@ -9,36 +9,44 @@ from pathlib import Path
 class DataDownloader:
     def __init__(self):
         self.config = Config()
+        if not self.config.SECURITIES:
+            raise ValueError("Config.SECURITIES must contain at least one (secid, name) pair")
         self.db = wrds.Connection(wrds_username=self.config.get_wrds_username())
-        self.security_id = self.config.SECURITY_ID
-        self.security_name = self.config.SECURITY_NAME
+        self._secid_list = [s[0] for s in self.config.SECURITIES]
+        self._secid_to_name = {s[0]: s[1] for s in self.config.SECURITIES}
+
+    def _secid_in_clause(self) -> str:
+        return ", ".join(str(sid) for sid in self._secid_list)
 
     def download_options_data(self):
         option_query = f"""
         SELECT
+            secid,
             date, exdate, strike_price/1000 as strike_price,
             impl_volatility, best_bid, best_offer,
             cp_flag, volume, open_interest,
             delta, gamma, theta, vega
         FROM optionm.opprcd2025
-        WHERE secid = {self.security_id}
+        WHERE secid IN ({self._secid_in_clause()})
             AND date BETWEEN '{self.config.START_DATE}' AND '{self.config.END_DATE}'
             AND (exdate - date) BETWEEN {self.config.DAYS_TO_EXPIRY_MIN} AND {self.config.DAYS_TO_EXPIRY_MAX}
             AND volume >= {self.config.MIN_VOLUME}
             AND impl_volatility BETWEEN {self.config.MIN_IMPLIED_VOLATILITY} AND {self.config.MAX_IMPLIED_VOLATILITY}
         """
         options_data = self.db.raw_sql(option_query)
+        options_data["security_name"] = options_data["secid"].map(self._secid_to_name)
         options_data.to_csv('data/options_metrics_raw/raw_options_data.csv', index=False)
         return options_data
 
     def download_spot_data(self):
         spot_query = f"""
-        SELECT date, close as spot_price
+        SELECT secid, date, close as spot_price
         FROM optionm.secprd2025
-        WHERE secid = {self.security_id}
+        WHERE secid IN ({self._secid_in_clause()})
             AND date BETWEEN '{self.config.START_DATE}' AND '{self.config.END_DATE}'
         """
         spot_data = self.db.raw_sql(spot_query)
+        spot_data["security_name"] = spot_data["secid"].map(self._secid_to_name)
         spot_data.to_csv('data/options_metrics_raw/raw_spot_data.csv', index=False)
         return spot_data
     
@@ -57,7 +65,9 @@ class DataDownloader:
         options_data = self.download_options_data()
         spot_data = self.download_spot_data()
         rate_data = self.download_rate_data()
-        df = options_data.merge(spot_data, on='date', how='left')
+        df = options_data.merge(spot_data, on=["secid", "date"], how="left", suffixes=("", "_spot"))
+        if "security_name_spot" in df.columns:
+            df = df.drop(columns=["security_name_spot"])
         df = df.merge(rate_data, on='date', how='left')
         df['mid_price'] = (df['best_bid'] + df['best_offer']) / 2
         df['spread'] = (df['best_offer'] - df['best_bid'])

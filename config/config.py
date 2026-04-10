@@ -4,9 +4,13 @@ class Config:
     """Configurations for the Options Pricing Suite"""
 
     # Data Download Parameters
-
-    SECURITY_ID = 108105
-    SECURITY_NAME = "SPX" # S&P 500 Index
+    # WRDS optionm secid and a short label
+    SECURITIES = [
+        (108105, "SPX"),
+        (102434, "RUT"),
+        (143439, "TSLA"),
+        (214684, "PLTR")
+    ]
 
     START_DATE = "2025-08-18"
     END_DATE = "2025-08-20"
