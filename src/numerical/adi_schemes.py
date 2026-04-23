@@ -390,11 +390,11 @@ class ADISolver:
         theta_v = params['theta']
         xi = params['xi']
         
-        N = self.N_S - 2  # Interior points only
+        N = self.N_S - 2
         rhs = np.zeros(N)
         
         for idx in range(N):
-            i = idx + 1  # Actual grid index (skip boundary at i=0)
+            i = idx + 1
             S_i = self.S[i]
 
             alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
@@ -411,9 +411,7 @@ class ADISolver:
 
             L_Sv = self.dt * self._apply_mixed_derivative_correction(V_n, j, i, params)
 
-            reaction_term = -self.dt * r * V_n[j,i]
-
-            rhs[idx] = V_n[j, i] + L_S_explicit + L_v_explicit + L_Sv + reaction_term
+            rhs[idx] = V_n[j, i] + L_S_explicit + L_v_explicit + L_Sv  # REMOVED reaction_term
 
         return rhs
 
@@ -503,13 +501,9 @@ class ADISolver:
                 alpha_v * (V_n[j+1, i] - 2*V_n[j,i] + V_n[j-1, i]) + beta_v * (V_n[j+1, i] - V_n[j-1, i])
             )
 
-            # Mixed derivative correction
             L_Sv = self.dt * self._apply_mixed_derivative_correction(V_n, j, i, params)
 
-            reaction_term = -self.dt * r * V_n[j,i]
-
-            # Reaction term
-            rhs[idx] = V_n[j, i] + L_S_explicit + L_v_explicit + L_Sv + reaction_term
+            rhs[idx] = V_n[j, i] + L_S_explicit + L_v_explicit + L_Sv  # REMOVED reaction_term
 
         return rhs
 
@@ -595,13 +589,11 @@ class ADISolver:
 
             L_Sv_term = gamma * self.dt * self._apply_mixed_derivative_correction(V_n, j, i, params)
 
-            reaction_term = -self.dt * r * V_n[j,i]
-
-            rhs[idx] = V_n[j, i] + L_S_explicit + L_v_explicit + L_Sv_term + reaction_term
+            rhs[idx] = V_n[j, i] + L_S_explicit + L_v_explicit + L_Sv_term  # REMOVED reaction_term
 
         return rhs
 
-    def _build_rhs_HV_step_2(self, V_star: np.ndarray, i: int, S_i: float, params:Dict, gamma:float) -> np.ndarray:
+    def _build_rhs_HV_step_2(self, V_bar: np.ndarray, i: int, S_i: float, params:Dict, gamma:float) -> np.ndarray:  # CHANGED V_star to V_bar
         """Builds the right-hand side for the second step of Hundsdorfer-Verwer scheme."""
         r = params['r']
         q = params.get('q', 0.0)
@@ -616,11 +608,11 @@ class ADISolver:
             alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
             beta_S = (r-q) *S_i/(2*self.dS)
             L_S_explicit = (1-self.theta) * self.dt * (
-                alpha_S * (V_star[j, i+1] - 2 * V_star[j, i] + V_star[j, i-1]) + beta_S * (V_star[j, i+1] - V_star[j, i-1])
+                alpha_S * (V_bar[j, i+1] - 2 * V_bar[j, i] + V_bar[j, i-1]) + beta_S * (V_bar[j, i+1] - V_bar[j, i-1])  # CHANGED V_star to V_bar
             )
 
-            L_Sv_term = gamma * self.dt * self._apply_mixed_derivative_correction(V_star, j, i, params)
-            rhs[idx] = V_star[j, i] + L_S_explicit + L_Sv_term
+            L_Sv_term = (1 - gamma) * self.dt * self._apply_mixed_derivative_correction(V_bar, j, i, params)  # CHANGED gamma to (1-gamma) and V_star to V_bar
+            rhs[idx] = V_bar[j, i] + L_S_explicit + L_Sv_term  # CHANGED V_star to V_bar
 
         return rhs
 
