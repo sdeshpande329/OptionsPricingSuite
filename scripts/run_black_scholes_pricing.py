@@ -113,7 +113,7 @@ def check_common_grid_explicit_stability(spot: float, strike: float, r: float, q
             "Choose a finer time grid (increase n_t) or a coarser stock grid (decrease n_s)."
         )
 
-def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, n_t: int = 2500,
+def main(scheme: str = "crank_nicolson", theta_cn: float = 0.5, n_s: int = 200, n_t: int = 3000,
     max_rows: Optional[int] = 25) -> None:
     """Run Black-Scholes pricing on cleaned OptionMetrics data and save results. """
     # checks that the cleaned data CSV exists before attempting to read:
