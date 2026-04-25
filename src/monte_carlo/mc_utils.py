@@ -25,7 +25,8 @@ def generate_antithetic_normals(n_paths:int, n_steps:int, seed: Optional[int] = 
         np.random.seed(seed)
     
     # Generate pairs
-    Z_half = np.random.standard_normal((n_paths, n_steps))
+    n_half = n_paths // 2
+    Z_half = np.random.standard_normal((n_half, n_steps))
 
     if n_paths%2 == 0:
         Z = np.vstack([Z_half, -Z_half])
