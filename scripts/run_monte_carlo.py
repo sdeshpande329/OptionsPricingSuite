@@ -11,7 +11,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.monte_carlo.mc_black_scholes import BlackScholesMonteCarlo
 from src.monte_carlo.mc_heston import HestonMonteCarlo
-# need to import MertonMonteCarlo when Mikey implements mc_merton.py
+from src.monte_carlo.mc_merton import MertonMonteCarlo
 
 DATA_PATH = REPO_ROOT / "data" / "options_metrics_processed" / "clean_options_data.csv"
 RESULTS_DIR = REPO_ROOT / "data" / "results"
@@ -156,58 +156,56 @@ def price_row_heston(row: pd.Series, heston_params: dict, n_paths: Optional[int]
         "model_name": "heston",
     }
 
+def price_row_merton(row: pd.Series, merton_params: dict, n_paths: Optional[int] = None) -> dict:
+    """Price one contract row with Merton Monte Carlo."""
+    spot = float(row["spot_price"])
+    strike = float(row["strike_price"])
+    tau = float(row["tau (time to maturity)"])
+    market_price = float(row["mid_price"])
+    option_type = infer_option_type(row["cp_flag"])
+    r = float(row["rate"]) / 100.0
+    sigma = float(row["impl_volatility"])
 
-# when Mikey implements mc_merton.py, uncomment and adapt this:
-# def price_row_merton(row: pd.Series, merton_params: dict, n_paths: Optional[int] = None) -> dict:
-#     """Price one contract row with Merton Monte Carlo."""
-#     spot = float(row["spot_price"])
-#     strike = float(row["strike_price"])
-#     tau = float(row["tau (time to maturity)"])
-#     market_price = float(row["mid_price"])
-#     option_type = infer_option_type(row["cp_flag"])
-#     r = float(row["rate"]) / 100.0
-#     sigma = float(row["impl_volatility"])
-#
-#     model = MertonMonteCarlo(
-#         r=r,
-#         q=0.0,
-#         sigma=sigma,
-#         lambda_jump=merton_params["lambda_jump"],
-#         jump_mean=merton_params["jump_mean"],
-#         jump_std=merton_params["jump_std"],
-#     )
-#
-#     price, std_error, diagnostics = model.price_european_option(
-#         S0=spot,
-#         K=strike,
-#         T=tau,
-#         option_type=option_type,
-#         n_paths=n_paths,
-#     )
-#
-#     ci_lower, ci_upper = diagnostics["ci_95"]
-#     abs_error = abs(price - market_price)
-#     sq_error = (price - market_price) ** 2
-#
-#     return {
-#         "date": row["date"],
-#         "exdate": row["exdate"],
-#         "cp_flag": row["cp_flag"],
-#         "spot_price": spot,
-#         "strike_price": strike,
-#         "tau (time to maturity)": tau,
-#         "market_mid_price": market_price,
-#         "model_price": price,
-#         "std_error": std_error,
-#         "ci_95_lower": ci_lower,
-#         "ci_95_upper": ci_upper,
-#         "n_paths": diagnostics["n_paths"],
-#         "n_steps": diagnostics["n_steps"],
-#         "antithetic_used": diagnostics["antithetic_used"],
-#         "abs_error": abs_error,
-#         "sq_error": sq_error,
-#         "model_name": "merton",
-#     }
+    model = MertonMonteCarlo(
+        r=r,
+        q=0.0,
+        sigma=sigma,
+        lambda_jump=merton_params["lambda_jump"],
+        jump_mean=merton_params["jump_mean"],
+        jump_std=merton_params["jump_std"],
+    )
+
+    price, std_error, diagnostics = model.price_european_option(
+        S0=spot,
+        K=strike,
+        T=tau,
+        option_type=option_type,
+        n_paths=n_paths,
+    )
+
+    ci_lower, ci_upper = diagnostics["ci_95"]
+    abs_error = abs(price - market_price)
+    sq_error = (price - market_price) ** 2
+
+    return {
+        "date": row["date"],
+        "exdate": row["exdate"],
+        "cp_flag": row["cp_flag"],
+        "spot_price": spot,
+        "strike_price": strike,
+        "tau (time to maturity)": tau,
+        "market_mid_price": market_price,
+        "model_price": price,
+        "std_error": std_error,
+        "ci_95_lower": ci_lower,
+        "ci_95_upper": ci_upper,
+        "n_paths": diagnostics["n_paths"],
+        "n_steps": diagnostics["n_steps"],
+        "antithetic_used": diagnostics["antithetic_used"],
+        "abs_error": abs_error,
+        "sq_error": sq_error,
+        "model_name": "merton",
+    }
 
 
 def main(model_name: str = "black_scholes", max_rows: Optional[int] = 25, n_paths: Optional[int] = None) -> None:
@@ -239,12 +237,7 @@ def main(model_name: str = "black_scholes", max_rows: Optional[int] = 25, n_path
             elif model_name == "heston":
                 priced = price_row_heston(row=row, heston_params=heston_params, n_paths=n_paths)
             elif model_name == "merton":
-                # following error message to be deleted when monte carlo merton is implemented (Mikey):
-                raise NotImplementedError(
-                    "Merton Monte Carlo is not implemented yet. "
-                    "When mc_merton.py is created, uncomment the Merton code in this runner."
-                )
-                # priced = price_row_merton(row=row, merton_params=merton_params, n_paths=n_paths) (Mikey)
+                priced = price_row_merton(row=row, merton_params=merton_params, n_paths=n_paths)
             else:
                 raise ValueError(
                     "model_name must be one of {'black_scholes', 'heston', 'merton'}"
