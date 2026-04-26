@@ -47,21 +47,21 @@ BSM_PARAMS = {
 HESTON_PARAMS = {
     "r": 0.05,
     "q": 0.0,
-    "kappa": 1.0,
-    "theta": 0.04,
-    "xi": 0.20,
-    "rho": -0.50,
-    "v0": 0.04,
+    "kappa": 10.0,
+    "theta": 0.01,
+    "xi": 0.19,
+    "rho": -0.90,
+    "v0": 0.01,
 }
 
 HESTON_STRESS_PARAMS = {
     "r": 0.05,
     "q": 0.0,
-    "kappa": 0.80,
-    "theta": 0.04,
-    "xi": 0.60,
-    "rho": -0.90,
-    "v0": 0.09,
+    "kappa": 8.0,
+    "theta": 0.02,
+    "xi": 0.30,
+    "rho": -0.95,
+    "v0": 0.02,
 }
 
 MERTON_PARAMS = {
