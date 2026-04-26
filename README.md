@@ -34,10 +34,33 @@ OptionsPricingSuite
 │   │   ├── raw_rate_data.csv
 │   │   └── raw_spot_data.csv
 │   └── results
+│       ├── convergence_plots
+│       │   ├── black_scholes_convergence_spatial_refinement_error_vs_runtime.png
+│       │   ├── black_scholes_convergence_spatial_refinement_primary.png
+│       │   ├── black_scholes_convergence_stable_coupled_refinement_error_vs_runtime.png
+│       │   ├── black_scholes_convergence_stable_coupled_refinement_primary.png
+│       │   ├── black_scholes_convergence_temporal_refinement_error_vs_runtime.png
+│       │   ├── black_scholes_convergence_temporal_refinement_primary.png
+│       │   ├── heston_convergence_spatial_refinement_error_vs_runtime.png
+│       │   ├── heston_convergence_spatial_refinement_primary.png
+│       │   ├── heston_convergence_temporal_refinement_error_vs_runtime.png
+│       │   ├── heston_convergence_temporal_refinement_primary.png
+│       │   ├── heston_stability_stress_rho_minus_0_90_xi_0_60_error_vs_runtime.png
+│       │   ├── heston_stability_stress_rho_minus_0_90_xi_0_60_primary.png
+│       │   ├── merton_jump_diffusion_convergence_spatial_refinement_error_vs_runtime.png
+│       │   ├── merton_jump_diffusion_convergence_spatial_refinement_primary.png
+│       │   ├── merton_jump_diffusion_convergence_temporal_refinement_error_vs_runtime.png
+│       │   ├── merton_jump_diffusion_convergence_temporal_refinement_primary.png
+│       │   ├── merton_jump_diffusion_stability_stress_lambda_1_00_error_vs_runtime.png
+│       │   └── merton_jump_diffusion_stability_stress_lambda_1_00_primary.png
+│       ├── black_scholes_finite_difference_PDE_terminal_output.JPG
+│       ├── black_scholes_monte_carlo_results.csv
 │       ├── black_scholes_pricing_results_crank_nicolson.csv
 │       ├── black_scholes_pricing_results_explicit.csv
 │       ├── black_scholes_pricing_results_implicit.csv
 │       ├── black_scholes_terminal_output.JPG
+│       ├── convergence_analysis_results.csv
+│       ├── convergence_summary_results.csv
 │       ├── heston_calibrated_parameters.csv
 │       ├── heston_price_comparison.csv
 │       ├── heston_pricing_results_craig-sneyd.csv
@@ -60,9 +83,14 @@ OptionsPricingSuite
 │   ├── calibrate_merton_jump_params.py
 │   ├── download_data.py
 │   ├── run_black_scholes_pricing.py
+│   ├── run_convergence_test.py
 │   ├── run_heston_pricing.py
-│   └── run_merton_pide_pricing.py
+│   ├── run_merton_pide_pricing.py
+│   └── run_monte_carlo.py
 ├── src
+│   ├── analysis
+│   │   ├── __init__.py
+│   │   └── convergence_testing.py
 │   ├── data
 │   │   ├── __init__.py
 │   │   └── data_downloader.py
@@ -73,7 +101,9 @@ OptionsPricingSuite
 │   │   └── merton_jump_diffusion.py
 │   ├── monte_carlo
 │   │   ├── __init__.py
+│   │   ├── mc_black_scholes.py
 │   │   ├── mc_heston.py
+│   │   ├── mc_merton.py
 │   │   └── mc_utils.py
 │   ├── numerical
 │   │   ├── __init__.py
