@@ -79,7 +79,8 @@ class HestonMonteCarlo:
         }
         return price, std_error, diagnostics
 
-    def price_multiple_options(self, S0: float, strikes: np.ndarray, maturities: np.ndarray, option_type: str = 'call'):
+    def price_multiple_options(self, S0: float, strikes: np.ndarray, maturities: np.ndarray, option_type: str = 'call',
+                               n_paths: Optional[int] = None):
         if len(strikes) != len(maturities):
             raise ValueError("strikes and maturities must have same length")
         
@@ -88,7 +89,7 @@ class HestonMonteCarlo:
         
         for i, (K, T) in enumerate(zip(strikes, maturities)):
             price, std_error, _ = self.price_european_option(
-                S0, K, T, option_type
+                S0, K, T, option_type, n_paths
             )
             prices[i] = price
             std_errors[i] = std_error
