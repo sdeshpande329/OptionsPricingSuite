@@ -6,10 +6,10 @@ class Config:
     # Data Download Parameters
     # WRDS optionm secid and a short label
     SECURITIES = [
-        (108105, "SPX"),
-        (102434, "RUT"),
-        (143439, "TSLA"),
-        (214684, "PLTR")
+        (108105, "SPX")
+        # ,(102434, "RUT")
+        # ,(143439, "TSLA")
+        # ,(214684, "PLTR")
     ]
 
     START_DATE = "2025-08-18"
