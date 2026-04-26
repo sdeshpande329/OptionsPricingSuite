@@ -47,11 +47,11 @@ BSM_PARAMS = {
 HESTON_PARAMS = {
     "r": 0.05,
     "q": 0.0,
-    "kappa": 10.0,
-    "theta": 0.01,
-    "xi": 0.19,
-    "rho": -0.90,
-    "v0": 0.01,
+    "kappa": 1.0,
+    "theta": 0.04,
+    "xi": 0.2,
+    "rho": -0.5,
+    "v0": 0.04,
 }
 
 HESTON_STRESS_PARAMS = {
@@ -111,10 +111,10 @@ HESTON_SPATIAL_REFINEMENTS = [
 ]
 
 HESTON_TEMPORAL_REFINEMENTS = [
-    {"N_S": 80, "N_v": 60, "N_t": 20},
-    {"N_S": 80, "N_v": 60, "N_t": 40},
-    {"N_S": 80, "N_v": 60, "N_t": 80},
-    {"N_S": 80, "N_v": 60, "N_t": 120},
+    {"N_S": 160, "N_v": 120, "N_t": 20},
+    {"N_S": 160, "N_v": 120, "N_t": 40},
+    {"N_S": 160, "N_v": 120, "N_t": 80},
+    {"N_S": 160, "N_v": 120, "N_t": 160},
 ]
 
 HESTON_STRESS_REFINEMENTS = [
@@ -305,11 +305,19 @@ def build_studies() -> list[ConvergenceStudy]:
             )
         )
 
-    heston_reference = build_heston_pricer("hundsdorfer_verwer", HESTON_PARAMS)(
-        {"N_S": 120, "N_v": 90, "N_t": 160}
+    heston_reference = HestonModel.characteristic_function_price(
+        S0=OPTION["spot"],
+        K=OPTION["strike"],
+        T=OPTION["maturity"],
+        option_type=OPTION["option_type"],
+        **HESTON_PARAMS,
     )
-    heston_stress_reference = build_heston_pricer("hundsdorfer_verwer", HESTON_STRESS_PARAMS)(
-        {"N_S": 100, "N_v": 75, "N_t": 140}
+    heston_stress_reference = HestonModel.characteristic_function_price(
+        S0=OPTION["spot"],
+        K=OPTION["strike"],
+        T=OPTION["maturity"],
+        option_type=OPTION["option_type"],
+        **HESTON_STRESS_PARAMS,
     )
     for scheme in ["douglas", "craig_sneyd", "modified_craig_sneyd", "hundsdorfer_verwer"]:
         studies.append(
@@ -318,7 +326,7 @@ def build_studies() -> list[ConvergenceStudy]:
                 scheme=scheme,
                 objective="convergence",
                 scenario="spatial_refinement",
-                reference_label="heston_fine_grid_hundsdorfer_verwer",
+                reference_label="heston_semianalytical",
                 reference_price=heston_reference,
                 price_fn=build_heston_pricer(scheme, HESTON_PARAMS),
                 refinements=HESTON_SPATIAL_REFINEMENTS,
@@ -334,7 +342,7 @@ def build_studies() -> list[ConvergenceStudy]:
                 scheme=scheme,
                 objective="convergence",
                 scenario="temporal_refinement",
-                reference_label="heston_fine_grid_hundsdorfer_verwer",
+                reference_label="heston_semianalytical",
                 reference_price=heston_reference,
                 price_fn=build_heston_pricer(scheme, HESTON_PARAMS),
                 refinements=HESTON_TEMPORAL_REFINEMENTS,
@@ -350,7 +358,7 @@ def build_studies() -> list[ConvergenceStudy]:
                 scheme=scheme,
                 objective="stability",
                 scenario="stress_rho_minus_0_90_xi_0_60",
-                reference_label="heston_stress_fine_grid_hundsdorfer_verwer",
+                reference_label="heston_stress_semianalytical",
                 reference_price=heston_stress_reference,
                 price_fn=build_heston_pricer(scheme, HESTON_STRESS_PARAMS),
                 refinements=HESTON_STRESS_REFINEMENTS,

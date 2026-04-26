@@ -1,645 +1,509 @@
-"""Alternating Direction Implicit (ADI) Schemes are used for solving multi-dimensional parabolic partial differential equations by breaking down the problem into a series of 1D problems."""
-
+from __future__ import annotations
 import numpy as np
 from typing import Callable, Dict, Tuple
-from .linear_solvers import *
+from .linear_solvers import solve_tridiagonal
+
+# Theta values taken from literature
+_DEFAULT_THETA: Dict[str, float] = {
+    "douglas":               0.5,
+    "craig_sneyd":           0.5,
+    "modified_craig_sneyd":  1.0 / 3.0,
+    "hundsdorfer_verwer":    0.5 + np.sqrt(3.0) / 6.0,
+}
 
 class ADISolver:
-    def __init__(self, scheme: str, theta: float = 0.5):
-        self.scheme = scheme
-        self.theta = theta
-        self.S = None
-        self.v = None
-        self.t = None
-        self.dS = None
-        self.dv = None
-        self.dt = None
+    """Solves the semi-discretised Heston PDE by an ADI splitting scheme."""
 
-    def setup_grid(self, S_min: float, S_max: float, N_S: int,
-               v_min: float, v_max: float, N_v: int,
-               T: float, N_t: int):
-        """Create spatial and temporal grids for the ADI solver."""
+    def __init__(self, scheme: str) -> None:
+        self.scheme = scheme
+        self.theta = _DEFAULT_THETA[scheme]
+
+        self.S: np.ndarray | None = None
+        self.v: np.ndarray | None = None
+        self.t: np.ndarray | None = None
+        self.dS: float | None = None
+        self.dv: float | None = None
+        self.dt: float | None = None
+        self.N_S: int | None = None
+        self.N_v: int | None = None
+        self.N_t: int | None = None
+
+    
+    def setup_grid(self, S_min: float, S_max: float, N_S: int, v_min: float, v_max: float, N_v: int, T: float, N_t: int) -> None:
+        """Create uniform spatial and temporal grids."""
         self.S = np.linspace(S_min, S_max, N_S)
         self.v = np.linspace(v_min, v_max, N_v)
-        self.t = np.linspace(0, T, N_t)
-        
+        self.t = np.linspace(0.0, T, N_t)
+
         self.dS = (S_max - S_min) / (N_S - 1)
         self.dv = (v_max - v_min) / (N_v - 1)
         self.dt = T / (N_t - 1)
-        
-        # ADD THESE THREE LINES:
+
         self.N_S = N_S
         self.N_v = N_v
         self.N_t = N_t
 
-    def solve(self, payoff: Callable, params: Dict[str, float]):
-        """Solves the problem using the selected scheme."""
-
+    
+    def solve(self, payoff: Callable, params: Dict[str, float]) -> np.ndarray:
+        """Solve the Heston PDE backward in time."""
         V = np.zeros((self.N_t, self.N_v, self.N_S))
+
         S_grid, v_grid = np.meshgrid(self.S, self.v, indexing='ij')
-        V[-1, :, :] = payoff(S_grid.T, v_grid.T)
+        V[-1] = payoff(S_grid.T, v_grid.T)
 
-        if self.scheme == 'douglas':
-            step_method = self.douglas_scheme
-        elif self.scheme == 'craig_sneyd':
-            step_method = self.craig_sneyd_scheme
-        elif self.scheme == 'modified_craig_sneyd':
-            step_method = self.modified_craig_sneyd_scheme
-        elif self.scheme == 'hundsdorfer_verwer':
-            step_method = self.hundsdorfer_verwer_scheme
-        else:
-            raise ValueError(f"Unsupported ADI scheme: {self.scheme}")
+        dispatch = {
+            'douglas':             self._douglas_step,
+            'craig_sneyd':         self._craig_sneyd_step,
+            'modified_craig_sneyd': self._modified_craig_sneyd_step,
+            'hundsdorfer_verwer':  self._hundsdorfer_verwer_step,
+        }
+        if self.scheme not in dispatch:
+            raise ValueError(f"Unknown scheme '{self.scheme}'. "
+                             f"Choose from {sorted(dispatch)}")
+        step = dispatch[self.scheme]
+        
+        # Rannacher damping: Replace first time step with two backward Euler half-steps to damp oscillations from the non-smooth payoff kink at S=K.
+        dt_half = self.dt / 2.0
+        V[-2] = self._backward_euler_step(V[-1], params, dt_half)
+        V[-2] = self._backward_euler_step(V[-2], params, dt_half)
+        V[-2] = self._apply_boundary_conditions(V[-2], params)
 
-        for i in range(self.N_t - 1, 0, -1):
-            V[i-1] = step_method(V[i], params)
-            V[i-1] = self._apply_boundary_conditions(V[i-1], params)
+        for n in range(self.N_t - 2, 0, -1):
+            V[n - 1] = step(V[n], params)
+            V[n - 1] = self._apply_boundary_conditions(V[n - 1], params)
 
         return V
+    
+    def _backward_euler_step(self, U: np.ndarray, params: Dict, dt_override: float) -> np.ndarray:
+        """One step of fully implicit (backward Euler) in both spatial directions. Used for Rannacher damping at t=0."""
+        dt_orig  = self.dt
+        th_orig  = self.theta
+        self.dt    = dt_override
+        self.theta = 1.0
 
-    # Schemes
+        FU = self._apply_F(U, params)
+        Y0 = U + dt_override * FU
 
-    def douglas_scheme(self, V_n: np.ndarray, params:Dict) -> np.ndarray:
+        Y1 = Y0.copy()
+        for j in range(1, self.N_v - 1):
+            lo, diag, up = self._build_tridiagonal_S(j, self.v[j], params)
+            rhs = self._rhs_implicit_S_correction(Y0, U, j, params, th=1.0)
+            Y1[j, 1:-1] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(Y0, Y1)
+
+        Y2 = Y1.copy()
+        for i in range(1, self.N_S - 1):
+            lo, diag, up = self._build_tridiagonal_v(i, self.S[i], params)
+            rhs = self._rhs_implicit_v_correction(Y1, U, i, params, th=1.0)
+            Y2[1:-1, i] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(Y1, Y2)
+
+        self.dt    = dt_orig
+        self.theta = th_orig
+
+        return Y2
+    
+    def _douglas_step(self, U: np.ndarray, params: Dict) -> np.ndarray:
         """
-        The Douglas scheme is an ADI method that splits the 2D problem into two 1D problems solved sequentially. Each spatial direction is treated implicitly in alternating half-steps.
-        First-order accurate in time O(Δt) and second-order accurate in space O(Δx², Δy²) with total accuracy O(Δt, Δx², Δy²). Unconditionally stable for diffusion terms.
+        Douglas (Do) scheme:
+
+            Y0 = U + dt * F(U)
+            Y1 = Y0 + theta*dt * (F1(Y1) - F1(U))       [implicit in S]
+            Y2 = Y1 + theta*dt * (F2(Y2) - F2(U))       [implicit in v]
+            U_new = Y2
+
+        F0 (mixed derivative) appears only in Y0 and is NOT corrected.
         """
-        N_v, N_S = V_n.shape
-        V_star = np.zeros_like(V_n)
-        V_next = np.zeros_like(V_n)
+        dt = self.dt
+        th = self.theta
 
-        # S-direction sweep
-        for j in range(1, N_v - 1):
-            v_j = self.v[j]
-            lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
-            rhs = self._build_rhs_douglas_step_1(V_n, j, v_j, params)
-            V_star[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
-        
-        # Copy boundary conditions from V_n to V_star
-        V_star[0, :] = V_n[0, :]
-        V_star[-1, :] = V_n[-1, :]
-        V_star[:, 0] = V_n[:, 0]
-        V_star[:, -1] = V_n[:, -1]
+        Y0 = U + dt * self._apply_F(U, params)
 
-        # Step 2: v-direction sweep (solve all columns)
-        for i in range(1, N_S - 1):
-            S_i = self.S[i]
-            lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
-            rhs = self._build_rhs_douglas_step_2(V_star, i, S_i, params)
-            V_next[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
+        # Y1: implicit S-direction correction
+        Y1 = Y0.copy()
+        for j in range(1, self.N_v - 1):
+            lo, diag, up = self._build_tridiagonal_S(j, self.v[j], params)
+            rhs = self._rhs_implicit_S_correction(Y0, U, j, params, th)
+            Y1[j, 1:-1] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(Y0, Y1)
 
-        # Copy boundary conditions from V_star to V_next
-        V_next[0, :] = V_star[0, :]
-        V_next[-1, :] = V_star[-1, :]
-        V_next[:, 0] = V_star[:, 0]
-        V_next[:, -1] = V_star[:, -1]
+        # Y2: implicit v-direction correction
+        Y2 = Y1.copy()
+        for i in range(1, self.N_S - 1):
+            lo, diag, up = self._build_tridiagonal_v(i, self.S[i], params)
+            rhs = self._rhs_implicit_v_correction(Y1, U, i, params, th)
+            Y2[1:-1, i] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(Y1, Y2)
 
-        return V_next
+        return Y2
 
-    def craig_sneyd_scheme(self, V_n: np.ndarray, params:Dict) -> np.ndarray:
+    def _craig_sneyd_step(self, U: np.ndarray, params: Dict) -> np.ndarray:
         """
-        The Craig-Sneyd scheme improves upon Douglas by adding a correction step that better handles mixed derivative terms. 
-        It uses a three-stage process: two half-step ADI sweeps followed by a correction for the mixed derivative. 
-        Second-order accurate in time O(Δt²) and second-order accurate in space O(Δx², Δy²) with total accuracy O(Δt², Δx², Δy²). 
-        Unconditionally stable for the full Heston PDE. Handles strong correlation (large |ρ|) much better than Douglas. Stable even when ρ → ±1. No spurious oscillations observed in practice.
+        Craig-Sneyd (CS) scheme, equation (2.18):
+
+            Y0  = U + dt*F(U)
+            Y1  = Y0 + theta*dt*(F1(Y1) - F1(U))
+            Y2  = Y1 + theta*dt*(F2(Y2) - F2(U))
+            ~Y0 = Y0 + (1/2)*dt*(F0(Y2) - F0(U))        [mixed-deriv correction]
+            ~Y1 = ~Y0 + theta*dt*(F1(~Y1) - F1(U))
+            ~Y2 = ~Y1 + theta*dt*(F2(~Y2) - F2(U))
+            U_new = ~Y2
+
+        The corrector re-uses the SAME tridiagonal systems (I - theta*dt*A1/A2) as the predictor, only the RHS changes.
         """
-        N_v, N_S = V_n.shape
-        V_bar = np.zeros_like(V_n)
-        
-        # S-direction sweep
-        for j in range(1, N_v - 1):
-            v_j = self.v[j]
-            lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
-            rhs = self._build_rhs_craig_sneyd_step_1(V_n, j, v_j, params)
-            V_bar[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
+        dt = self.dt
+        th = self.theta
 
-        # Copy boundary conditions from V_n to V_bar
-        V_bar[0, :] = V_n[0, :]
-        V_bar[-1, :] = V_n[-1, :]
-        V_bar[:, 0] = V_n[:, 0]
-        V_bar[:, -1] = V_n[:, -1]
+        # Predictor (identical to Douglas)
+        Y0 = U + dt * self._apply_F(U, params)
 
-        # v-direction sweep
-        V_star = np.zeros_like(V_n)
-        for i in range(1, N_S - 1):
-            S_i = self.S[i]
-            lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
-            rhs = self._build_rhs_craig_sneyd_step_2(V_bar, i, S_i, params)
-            V_star[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
-            
-        # Copy boundary conditions from V_bar to V_star
-        V_star[0, :] = V_bar[0, :]
-        V_star[-1, :] = V_bar[-1, :]
-        V_star[:, 0] = V_bar[:, 0]
-        V_star[:, -1] = V_bar[:, -1]
+        Y1 = Y0.copy()
+        for j in range(1, self.N_v - 1):
+            lo, diag, up = self._build_tridiagonal_S(j, self.v[j], params)
+            rhs = self._rhs_implicit_S_correction(Y0, U, j, params, th)
+            Y1[j, 1:-1] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(Y0, Y1)
 
-        # S-direction correction
-        V_tilde = np.zeros_like(V_n)
-        for j in range(1, N_v - 1):
-            v_j = self.v[j]
-            lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
-            rhs = self._build_rhs_craig_sneyd_step_3(V_star, V_n, j, v_j, params)
-            V_tilde[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
-            
-        # Copy boundary conditions from V_star to V_tilde
-        V_tilde[0, :] = V_star[0, :]
-        V_tilde[-1, :] = V_star[-1, :]
-        V_tilde[:, 0] = V_star[:, 0]
-        V_tilde[:, -1] = V_star[:, -1]
+        Y2 = Y1.copy()
+        for i in range(1, self.N_S - 1):
+            lo, diag, up = self._build_tridiagonal_v(i, self.S[i], params)
+            rhs = self._rhs_implicit_v_correction(Y1, U, i, params, th)
+            Y2[1:-1, i] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(Y1, Y2)
 
-        # Step 4: v-direction correction
-        V_next = np.zeros_like(V_n)
-        for i in range(1, N_S - 1):
-            S_i = self.S[i]
-            lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
-            rhs = self._build_rhs_craig_sneyd_step_4(V_tilde, V_star, i, S_i, params)
-            V_next[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
-            
-        # Copy boundary conditions from V_tilde to V_next
-        V_next[0, :] = V_tilde[0, :]
-        V_next[-1, :] = V_tilde[-1, :]
-        V_next[:, 0] = V_tilde[:, 0]
-        V_next[:, -1] = V_tilde[:, -1]
+        # Corrector: ~Y0 = Y0 + (1/2)*dt*(F0(Y2) - F0(U))
+        F0_Y2 = self._apply_F0(Y2, params)
+        F0_U  = self._apply_F0(U,  params)
+        tY0 = Y0 + 0.5 * dt * (F0_Y2 - F0_U)
+        self._copy_boundaries(Y0, tY0)
 
-        return V_next
+        tY1 = tY0.copy()
+        for j in range(1, self.N_v - 1):
+            lo, diag, up = self._build_tridiagonal_S(j, self.v[j], params)
+            rhs = self._rhs_implicit_S_correction(tY0, U, j, params, th)
+            tY1[j, 1:-1] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(tY0, tY1)
 
-    def modified_craig_sneyd_scheme(self, V_n: np.ndarray, params:Dict) -> np.ndarray:
+        tY2 = tY1.copy()
+        for i in range(1, self.N_S - 1):
+            lo, diag, up = self._build_tridiagonal_v(i, self.S[i], params)
+            rhs = self._rhs_implicit_v_correction(tY1, U, i, params, th)
+            tY2[1:-1, i] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(tY1, tY2)
+
+        return tY2
+
+    def _modified_craig_sneyd_step(self, U: np.ndarray, params: Dict) -> np.ndarray:
         """
-        The MCS scheme modifies the standard Craig-Sneyd by adjusting how the mixed derivative correction is applied. 
-        It uses a different splitting that improves stability properties while maintaining accuracy. Second-order accurate in time O(Δt²) and second-order accurate in space O(Δx², Δy²) with total accuracy O(Δt², Δx², Δy²). 
-        Unconditionally stable. Enhanced stability compared to standard Craig-Sneyd. Better damping of high-frequency errors. Particularly stable for large time steps. Excellent performance with strong correlation.
+        Modified Craig-Sneyd (MCS) scheme, equation (2.19):
+
+            Y0  = U + dt*F(U)
+            Y1  = Y0 + theta*dt*(F1(Y1) - F1(U))
+            Y2  = Y1 + theta*dt*(F2(Y2) - F2(U))
+            ^Y0 = Y0 + theta*dt*(F0(Y2) - F0(U))
+            ~Y0 = ^Y0 + (1/2 - theta)*dt*(F(Y2) - F(U))
+            ~Y1 = ~Y0 + theta*dt*(F1(~Y1) - F1(U))
+            ~Y2 = ~Y1 + theta*dt*(F2(~Y2) - F2(U))
+            U_new = ~Y2
+
+        Note the corrector sweeps subtract F1(U) / F2(U), i.e. the OLD level, unlike HV which subtracts F1(Y2) / F2(Y2).
         """
-        N_v, N_S = V_n.shape
+        dt = self.dt
+        th = self.theta
 
-        V_bar = np.zeros_like(V_n)
-        V_star = np.zeros_like(V_n)
-        V_tilde = np.zeros_like(V_n)
-        V_next = np.zeros_like(V_n)
+        # Predictor
+        FU  = self._apply_F(U, params)
+        Y0 = U + dt * FU
 
-        # S-direction sweep
-        for j in range(1, N_v - 1):
-            v_j = self.v[j]
-            lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
-            rhs = self._build_rhs_modified_craig_sneyd_step_1(V_n, j, v_j, params)
-            V_bar[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
+        Y1 = Y0.copy()
+        for j in range(1, self.N_v - 1):
+            lo, diag, up = self._build_tridiagonal_S(j, self.v[j], params)
+            rhs = self._rhs_implicit_S_correction(Y0, U, j, params, th)
+            Y1[j, 1:-1] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(Y0, Y1)
 
-        # Copy boundary conditions from V_n to V_bar
-        V_bar[0, :] = V_n[0, :]
-        V_bar[-1, :] = V_n[-1, :]
-        V_bar[:, 0] = V_n[:, 0]
-        V_bar[:, -1] = V_n[:, -1]
+        Y2 = Y1.copy()
+        for i in range(1, self.N_S - 1):
+            lo, diag, up = self._build_tridiagonal_v(i, self.S[i], params)
+            rhs = self._rhs_implicit_v_correction(Y1, U, i, params, th)
+            Y2[1:-1, i] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(Y1, Y2)
 
-        # v-direction sweep
-        for i in range(1, N_S - 1):
-            S_i = self.S[i]
-            lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
-            rhs = self._build_rhs_modified_craig_sneyd_step_2(V_bar, i, S_i, params)
-            V_star[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
+        # ^Y0 = Y0 + theta*dt*(F0(Y2) - F0(U))
+        F0_Y2 = self._apply_F0(Y2, params)
+        F0_U  = self._apply_F0(U,  params)
+        hY0 = Y0 + th * dt * (F0_Y2 - F0_U)
+        self._copy_boundaries(Y0, hY0)
 
-        # Copy boundary conditions from V_bar to V_star
-        V_star[0, :] = V_bar[0, :]
-        V_star[-1, :] = V_bar[-1, :]
-        V_star[:, 0] = V_bar[:, 0]
-        V_star[:, -1] = V_bar[:, -1]
+        # ~Y0 = ^Y0 + (1/2 - theta)*dt*(F(Y2) - F(U))
+        FY2 = self._apply_F(Y2, params)
+        tY0 = hY0 + (0.5 - th) * dt * (FY2 - FU)
+        self._copy_boundaries(hY0, tY0)
 
-        # S-direction correction
-        for j in range(1, N_v - 1):
-            v_j = self.v[j]
-            lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
-            rhs = self._build_rhs_modified_craig_sneyd_step_3(V_star, V_n, j, v_j, params)
-            V_tilde[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
+        # Corrector sweeps subtract F1(U) / F2(U) -- same as predictor reference
+        tY1 = tY0.copy()
+        for j in range(1, self.N_v - 1):
+            lo, diag, up = self._build_tridiagonal_S(j, self.v[j], params)
+            rhs = self._rhs_implicit_S_correction(tY0, U, j, params, th)
+            tY1[j, 1:-1] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(tY0, tY1)
 
-        # Copy boundary conditions from V_star to V_tilde
-        V_tilde[0, :] = V_star[0, :]
-        V_tilde[-1, :] = V_star[-1, :]
-        V_tilde[:, 0] = V_star[:, 0]
-        V_tilde[:, -1] = V_star[:, -1]
+        tY2 = tY1.copy()
+        for i in range(1, self.N_S - 1):
+            lo, diag, up = self._build_tridiagonal_v(i, self.S[i], params)
+            rhs = self._rhs_implicit_v_correction(tY1, U, i, params, th)
+            tY2[1:-1, i] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(tY1, tY2)
 
-        # v-direction correction
-        for i in range(1, N_S - 1):
-            S_i = self.S[i]
-            lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
-            rhs = self._build_rhs_modified_craig_sneyd_step_4(V_tilde, V_star, i, S_i, params)
-            V_next[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
+        return tY2
 
-        # Copy boundary conditions from V_tilde to V_next
-        V_next[0, :] = V_tilde[0, :]
-        V_next[-1, :] = V_tilde[-1, :]
-        V_next[:, 0] = V_tilde[:, 0]
-        V_next[:, -1] = V_tilde[:, -1]
-
-        return V_next
-
-    def hundsdorfer_verwer_scheme(self, V_n: np.ndarray, params:Dict) -> np.ndarray:
+    def _hundsdorfer_verwer_step(self, U: np.ndarray, params: Dict) -> np.ndarray:
         """
-        The Hundsdorfer-Verwer scheme is a sophisticated ADI method that combines features of Craig-Sneyd with additional correction terms. It achieves excellent accuracy for mixed derivatives through a carefully constructed multi-stage process. 
-        Second-order accurate in time O(Δt²) and second-order accurate in space O(Δx², Δy²) with total accuracy O(Δt², Δx², Δy²). 
-        Best accuracy among ADI schemes for mixed derivative problems. Smallest error constants (lowest actual errors for given Δt, Δx, Δy). 
-        Unconditionally stable. Excellent stability properties for all correlation values. Superior damping of oscillations. Most robust ADI scheme for difficult problems.
+        Hundsdorfer-Verwer (HV) scheme, equation (2.20):
+
+            Y0  = U + dt*F(U)
+            Y1  = Y0 + theta*dt*(F1(Y1) - F1(U))
+            Y2  = Y1 + theta*dt*(F2(Y2) - F2(U))
+            ~Y0 = Y0 + (1/2)*dt*(F(Y2)  - F(U))         [full F, not just F0]
+            ~Y1 = ~Y0 + theta*dt*(F1(~Y1) - F1(Y2))     [subtracts F1(Y2), not F1(U)]
+            ~Y2 = ~Y1 + theta*dt*(F2(~Y2) - F2(Y2))     [subtracts F2(Y2), not F2(U)]
+            U_new = ~Y2
+
+        Key difference from MCS: corrector sweeps reference Y2, not U.
         """
-        gamma, alpha, beta = 0.5, 0.5, 0.5 # Optimal values pulled from Hundsdorfer and Verwer 1997
+        dt = self.dt
+        th = self.theta
 
-        N_v, N_S = V_n.shape
+        # Predictor
+        FU = self._apply_F(U, params)
+        Y0 = U + dt * FU
 
-        V_bar = np.zeros_like(V_n)
-        V_star = np.zeros_like(V_n)
-        V_tilde = np.zeros_like(V_n)
-        V_next = np.zeros_like(V_n)
+        Y1 = Y0.copy()
+        for j in range(1, self.N_v - 1):
+            lo, diag, up = self._build_tridiagonal_S(j, self.v[j], params)
+            rhs = self._rhs_implicit_S_correction(Y0, U, j, params, th)
+            Y1[j, 1:-1] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(Y0, Y1)
 
-        # S-direction sweep
-        for j in range(1, N_v - 1):
-            v_j = self.v[j]
-            lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
-            rhs = self._build_rhs_HV_step_1(V_n, j, v_j, params, gamma)
-            V_bar[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
+        Y2 = Y1.copy()
+        for i in range(1, self.N_S - 1):
+            lo, diag, up = self._build_tridiagonal_v(i, self.S[i], params)
+            rhs = self._rhs_implicit_v_correction(Y1, U, i, params, th)
+            Y2[1:-1, i] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(Y1, Y2)
 
-        # Copy boundary conditions from V_n to V_bar
-        V_bar[0, :] = V_n[0, :]
-        V_bar[-1, :] = V_n[-1, :]
-        V_bar[:, 0] = V_n[:, 0]
-        V_bar[:, -1] = V_n[:, -1]
+        # ~Y0 = Y0 + (1/2)*dt*(F(Y2) - F(U))   -- uses FULL F, not just F0
+        FY2 = self._apply_F(Y2, params)
+        tY0 = Y0 + 0.5 * dt * (FY2 - FU)
+        self._copy_boundaries(Y0, tY0)
 
-        # v-direction sweep
-        for i in range(1, N_S - 1):
-            S_i = self.S[i]
-            lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
-            rhs = self._build_rhs_HV_step_2(V_bar, i, S_i, params, gamma)
-            V_star[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
+        # Corrector sweeps reference Y2 (not U) -- this is the HV distinction
+        tY1 = tY0.copy()
+        for j in range(1, self.N_v - 1):
+            lo, diag, up = self._build_tridiagonal_S(j, self.v[j], params)
+            rhs = self._rhs_implicit_S_correction(tY0, Y2, j, params, th)
+            tY1[j, 1:-1] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(tY0, tY1)
 
-        # Copy boundary conditions from V_bar to V_star
-        V_star[0, :] = V_bar[0, :]
-        V_star[-1, :] = V_bar[-1, :]
-        V_star[:, 0] = V_bar[:, 0]
-        V_star[:, -1] = V_bar[:, -1]
+        tY2 = tY1.copy()
+        for i in range(1, self.N_S - 1):
+            lo, diag, up = self._build_tridiagonal_v(i, self.S[i], params)
+            rhs = self._rhs_implicit_v_correction(tY1, Y2, i, params, th)
+            tY2[1:-1, i] = solve_tridiagonal(lo, diag, up, rhs)
+        self._copy_boundaries(tY1, tY2)
 
-        # S-direction correction
-        for j in range(1, N_v - 1):
-            v_j = self.v[j]
-            lower, diag, upper = self._build_tridiagonal_S(j, v_j, params)
-            rhs = self._build_rhs_HV_step_3(V_star, V_bar, j, v_j, params, alpha)
-            V_tilde[j, 1:-1] = solve_tridiagonal(lower, diag, upper, rhs)
-
-        # Copy boundary conditions from V_star to V_tilde
-        V_tilde[0, :] = V_star[0, :]
-        V_tilde[-1, :] = V_star[-1, :]
-        V_tilde[:, 0] = V_star[:, 0]
-        V_tilde[:, -1] = V_star[:, -1]
-
-        # v-direction correction
-        for i in range(1, N_S - 1):
-            S_i = self.S[i]
-            lower, diag, upper = self._build_tridiagonal_v(i, S_i, params)
-            rhs = self._build_rhs_HV_step_4(V_tilde, V_star, i, S_i, params, beta)
-            V_next[1:-1, i] = solve_tridiagonal(lower, diag, upper, rhs)
-
-        # Copy boundary conditions from V_tilde to V_next
-        V_next[0, :] = V_tilde[0, :]
-        V_next[-1, :] = V_tilde[-1, :]
-        V_next[:, 0] = V_tilde[:, 0]
-        V_next[:, -1] = V_tilde[:, -1]
-
-        return V_next
+        return tY2
 
 
-    # Helper Functions
+    def _apply_F(self, V: np.ndarray, params: Dict) -> np.ndarray:
+        """Apply the full operator F = F0 + F1 + F2 explicitly."""
+        return self._apply_F0(V, params) + self._apply_F1(V, params) + self._apply_F2(V, params)
 
-    def _apply_boundary_conditions(self, V, params):
-        """Applies the boundary conditions to the solution."""
-        return V
+    def _apply_F0(self, V: np.ndarray, params: Dict) -> np.ndarray:
+        """
+        Apply the mixed derivative operator F0 explicitly.
 
-    def _build_tridiagonal_S(self, j:int, v_j:float, params: Dict[str, float]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Builds the tridiagonal system for the S direction."""
-        r = params['r']
-        q = params.get('q', 0.0)
-        
-        N = self.N_S - 2  # Interior points only
-        lower = np.zeros(N - 1)
-        diag = np.zeros(N)
-        upper = np.zeros(N - 1)
-        
-        for idx in range(N):
-            i = idx + 1  # Actual grid index (skip boundary at i=0)
-            S_i = self.S[i]
-            
-            
-            alpha = 0.5 * v_j * S_i**2 / self.dS**2
-            beta = (r - q) * S_i / (2 * self.dS)
-            
-            if idx > 0:
-                lower[idx - 1] = -self.theta * self.dt * (alpha - beta)
-            
-            diag[idx] = 1 + self.theta * self.dt * (2 * alpha + r)
-            
-            if idx < N - 1:
-                upper[idx] = -self.theta * self.dt * (alpha + beta)
-        
-        return lower, diag, upper
-
-    def _build_tridiagonal_v(self, i:int, S_i:float, params: Dict[str, float]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Builds the tridiagonal system for the v direction."""
-        r = params['r']
-        kappa = params['kappa']
-        theta_v = params['theta']
-        xi = params['xi']
-
-        N = self.N_v - 2  # Interior points only
-        lower = np.zeros(N - 1)
-        diag = np.zeros(N)
-        upper = np.zeros(N - 1)
-        
-        for idx in range(N):
-            j = idx + 1  # Actual grid index (skip boundary at j=0)
-            v_j = self.v[j]
-            
-            alpha = 0.5 * xi**2 * v_j / self.dv**2
-            beta = kappa * (theta_v - v_j) / (2 * self.dv)
-
-            if idx > 0:
-                lower[idx - 1] = -self.theta * self.dt * (alpha - beta)
-
-            diag[idx] = 1 + self.theta * self.dt * (2 * alpha + r)  # CHANGED FROM +kappa to +r
-
-            if idx < N - 1:
-                upper[idx] = -self.theta * self.dt * (alpha + beta)
-
-        return lower, diag, upper
-
-    def _apply_mixed_derivative_correction(self, V:np.ndarray, j:int, i:int, params: Dict) -> float:
-        """Applies the mixed derivative correction to the solution."""
+        F0[j,i] = rho * xi * v_j * S_i * d2V/dSdv  (central differences)
+        """
         rho = params['rho']
-        xi = params['xi']
-        
-        v_j = self.v[j]
-        S_i = self.S[i]
-        
-        # Check bounds
-        if j == 0 or j == self.N_v - 1 or i == 0 or i == self.N_S - 1:
-            return 0.0
-        
-        # Mixed derivative (central difference)
-        d2V_dSdv = (V[j+1, i+1] - V[j+1, i-1] - V[j-1, i+1] + V[j-1, i-1]) / (4 * self.dS * self.dv)
-        
-        L_Sv = rho * xi * v_j * S_i * d2V_dSdv
-        
-        return L_Sv
-        
-    def _build_rhs_douglas_step_1(self, V_n: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
-        """Builds the right-hand side for the first step of Douglas scheme."""
-        r = params['r']
-        q = params.get('q', 0.0)
-        kappa = params['kappa']
+        xi  = params['xi']
+
+        result = np.zeros_like(V)
+        for j in range(1, self.N_v - 1):
+            for i in range(1, self.N_S - 1):
+                v_j = self.v[j]
+                S_i = self.S[i]
+                d2V = (V[j+1, i+1] - V[j+1, i-1]
+                       - V[j-1, i+1] + V[j-1, i-1]) / (4.0 * self.dS * self.dv)
+                result[j, i] = rho * xi * v_j * S_i * d2V
+        return result
+
+    def _apply_F1(self, V: np.ndarray, params: Dict) -> np.ndarray:
+        """
+        Apply the S-direction operator F1 explicitly.
+
+        F1[j,i] = (1/2)*v_j*S_i^2 * d2V/dS^2
+                + (r-q)*S_i * dV/dS
+                - (r/2) * V
+        """
+        r  = params['r']
+        q  = params.get('q', 0.0)
+        dS = self.dS
+
+        result = np.zeros_like(V)
+        for j in range(1, self.N_v - 1):
+            v_j = self.v[j]
+            for i in range(1, self.N_S - 1):
+                S_i = self.S[i]
+                d2V_dS2 = (V[j, i+1] - 2.0*V[j, i] + V[j, i-1]) / dS**2
+                dV_dS   = (V[j, i+1] - V[j, i-1]) / (2.0 * dS)
+                result[j, i] = (0.5 * v_j * S_i**2 * d2V_dS2
+                                + (r - q) * S_i * dV_dS
+                                - 0.5 * r * V[j, i])
+        return result
+
+    def _apply_F2(self, V: np.ndarray, params: Dict) -> np.ndarray:
+        """
+        Apply the v-direction operator F2 explicitly.
+
+        F2[j,i] = (1/2)*xi^2*v_j * d2V/dv^2
+                + kappa*(theta-v_j) * dV/dv
+                - (r/2) * V
+        """
+        r       = params['r']
+        kappa   = params['kappa']
         theta_v = params['theta']
-        xi = params['xi']
-        
+        xi      = params['xi']
+        dv      = self.dv
+
+        result = np.zeros_like(V)
+        for j in range(1, self.N_v - 1):
+            v_j = self.v[j]
+            for i in range(1, self.N_S - 1):
+                d2V_dv2 = (V[j+1, i] - 2.0*V[j, i] + V[j-1, i]) / dv**2
+                dV_dv   = (V[j+1, i] - V[j-1, i]) / (2.0 * dv)
+                result[j, i] = (0.5 * xi**2 * v_j * d2V_dv2
+                                + kappa * (theta_v - v_j) * dV_dv
+                                - 0.5 * r * V[j, i])
+        return result
+
+    def _build_tridiagonal_S(self, j: int, v_j: float, params: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Build (I - theta*dt*A1) tridiagonal system for the S-direction."""
+        r  = params['r']
+        q  = params.get('q', 0.0)
+        th = self.theta
+        dt = self.dt
+        dS = self.dS
+
         N = self.N_S - 2
-        rhs = np.zeros(N)
-        
+        lower = np.zeros(N - 1)
+        diag  = np.zeros(N)
+        upper = np.zeros(N - 1)
+
         for idx in range(N):
-            i = idx + 1
+            i   = idx + 1
             S_i = self.S[i]
+            alpha = 0.5 * v_j * S_i**2 / dS**2
+            beta  = (r - q) * S_i / (2.0 * dS)
 
-            alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
-            beta_S = (r - q) * S_i / (2 * self.dS)
-            L_S_explicit = (1-self.theta) * self.dt * (
-                alpha_S * (V_n[j, i+1] - 2 * V_n[j, i] + V_n[j, i-1]) + beta_S * (V_n[j, i+1] - V_n[j, i-1])
-            )
-            
-            alpha_v = 0.5 * xi**2 * v_j / self.dv**2
-            beta_v = kappa * (theta_v - v_j) / (2 * self.dv)
-            L_v_explicit = self.dt * (
-                alpha_v * (V_n[j+1, i] - 2*V_n[j,i] + V_n[j-1, i]) + beta_v * (V_n[j+1, i] - V_n[j-1, i])
-            )
+            if idx > 0:
+                lower[idx - 1] = -th * dt * (alpha - beta)
+            diag[idx] = 1.0 + th * dt * (2.0 * alpha + 0.5 * r)
+            if idx < N - 1:
+                upper[idx] = -th * dt * (alpha + beta)
 
-            L_Sv = self.dt * self._apply_mixed_derivative_correction(V_n, j, i, params)
+        return lower, diag, upper
 
-            rhs[idx] = V_n[j, i] + L_S_explicit + L_v_explicit + L_Sv  # REMOVED reaction_term
+    def _build_tridiagonal_v(self, i: int, S_i: float, params: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Build (I - theta*dt*A2) tridiagonal system for the v-direction."""
+        r       = params['r']
+        kappa   = params['kappa']
+        theta_v = params['theta']
+        xi      = params['xi']
+        th      = self.theta
+        dt      = self.dt
+        dv      = self.dv
+
+        N = self.N_v - 2
+        lower = np.zeros(N - 1)
+        diag  = np.zeros(N)
+        upper = np.zeros(N - 1)
+
+        for idx in range(N):
+            j   = idx + 1
+            v_j = self.v[j]
+            alpha = 0.5 * xi**2 * v_j / dv**2
+            beta  = kappa * (theta_v - v_j) / (2.0 * dv)
+
+            if idx > 0:
+                lower[idx - 1] = -th * dt * (alpha - beta)
+            diag[idx] = 1.0 + th * dt * (2.0 * alpha + 0.5 * r)
+            if idx < N - 1:
+                upper[idx] = -th * dt * (alpha + beta)
+
+        return lower, diag, upper
+
+
+    def _rhs_implicit_S_correction(self,Y_prev: np.ndarray, ref: np.ndarray, j: int, params: Dict, th: float) -> np.ndarray:
+        """RHS for the implicit S-direction correction step."""
+        N   = self.N_S - 2
+        rhs = np.zeros(N)
+        th_dt = th * self.dt
+
+        for idx in range(N):
+            i   = idx + 1
+            S_i = self.S[i]
+            v_j = self.v[j]
+            r   = params['r']
+            q   = params.get('q', 0.0)
+            dS  = self.dS
+
+            alpha = 0.5 * v_j * S_i**2 / dS**2
+            beta  = (r - q) * S_i / (2.0 * dS)
+
+            F1_ref = (alpha * (ref[j, i+1] - 2.0*ref[j, i] + ref[j, i-1])
+                      + beta * (ref[j, i+1] - ref[j, i-1])
+                      - 0.5 * r * ref[j, i])
+
+            rhs[idx] = Y_prev[j, i] - th_dt * F1_ref
 
         return rhs
 
-    def _build_rhs_douglas_step_2(self, V_star: np.ndarray, i: int, S_i: float, params:Dict) -> np.ndarray:
-        """Builds the right-hand side for the second step of Douglas scheme."""
-        r = params['r']
-        q = params.get('q', 0.0)
-        
-        N = self.N_v - 2  # Interior points only
+    def _rhs_implicit_v_correction(self, Y_prev: np.ndarray, ref: np.ndarray, i: int, params: Dict, th: float) -> np.ndarray:
+        """RHS for the implicit v-direction correction step."""
+        N   = self.N_v - 2
         rhs = np.zeros(N)
-        
+        th_dt = th * self.dt
+
+        r       = params['r']
+        kappa   = params['kappa']
+        theta_v = params['theta']
+        xi      = params['xi']
+        dv      = self.dv
+
         for idx in range(N):
-            j = idx + 1 
+            j   = idx + 1
             v_j = self.v[j]
 
-            alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
-            beta_S = (r-q) *S_i/(2*self.dS)
-            L_S_explicit = (1-self.theta) * self.dt * (
-                alpha_S * (V_star[j, i+1] - 2 * V_star[j, i] + V_star[j, i-1]) + beta_S * (V_star[j, i+1] - V_star[j, i-1])
-            )
+            alpha = 0.5 * xi**2 * v_j / dv**2
+            beta  = kappa * (theta_v - v_j) / (2.0 * dv)
 
-            rhs[idx] = V_star[j, i] + L_S_explicit
+            F2_ref = (alpha * (ref[j+1, i] - 2.0*ref[j, i] + ref[j-1, i])
+                      + beta * (ref[j+1, i] - ref[j-1, i])
+                      - 0.5 * r * ref[j, i])
 
-        return rhs
-
-    def _build_rhs_craig_sneyd_step_1(self, V_n: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
-        """Builds the right-hand side for the first step of Craig-Sneyd scheme."""
-        return self._build_rhs_douglas_step_1(V_n, j, v_j, params)
-
-    def _build_rhs_craig_sneyd_step_2(self, V_bar: np.ndarray, i: int, S_i: float, params:Dict) -> np.ndarray:
-        """Builds the right-hand side for the second step of Craig-Sneyd scheme."""
-        return self._build_rhs_douglas_step_2(V_bar, i, S_i, params)
-
-    def _build_rhs_craig_sneyd_step_3(self, V_star: np.ndarray, V_n: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
-        """Builds the right-hand side for the third step of Craig-Sneyd scheme."""
-        N = self.N_S - 2
-        rhs = np.zeros(N)
-        
-        for idx in range(N):
-            i = idx + 1 
-
-            L_Sv_star = self._apply_mixed_derivative_correction(V_star, j, i, params)
-            L_Sv_n = self._apply_mixed_derivative_correction(V_n, j, i, params)
-
-            correction_term = self.dt * (L_Sv_star - L_Sv_n)
-
-            rhs[idx] = V_star[j, i] + correction_term
+            rhs[idx] = Y_prev[j, i] - th_dt * F2_ref
 
         return rhs
 
-    def _build_rhs_craig_sneyd_step_4(self, V_tilde:np.ndarray, V_star: np.ndarray, i:int, S_i:float, params:Dict) -> np.ndarray:
-        """Builds the right-hand side for the fourth step of Craig-Sneyd scheme."""
-        N = self.N_v - 2  # Interior points only
-        rhs = np.zeros(N)
-        
-        for idx in range(N):
-            j = idx + 1 
-            rhs[idx] = V_tilde[j, i]
+    def _apply_boundary_conditions(self, V: np.ndarray, params: Dict) -> np.ndarray:
+        """Apply Heston PDE boundary conditions (equations 2.3-2.5)."""
+        return V
 
-        return rhs
-
-    def _build_rhs_modified_craig_sneyd_step_1(self, V_n: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
-        """Builds the right-hand side for the first step of Modified Craig-Sneyd scheme."""
-        r = params['r']
-        q = params.get('q', 0.0)
-        kappa = params['kappa']
-        theta_v = params['theta']
-        xi = params['xi']
-
-        N = self.N_S - 2
-        rhs = np.zeros(N)
-
-        for idx in range(N):
-            i = idx + 1
-            S_i = self.S[i]
-
-            alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
-            beta_S = (r - q) * S_i / (2 * self.dS)
-            L_S_explicit = (1-self.theta) * self.dt * (
-                alpha_S * (V_n[j, i+1] - 2 * V_n[j, i] + V_n[j, i-1]) + beta_S * (V_n[j, i+1] - V_n[j, i-1])
-            )
-
-            alpha_v = 0.5 * xi**2 * v_j / self.dv**2
-            beta_v = kappa * (theta_v - v_j) / (2 * self.dv)
-
-            L_v_explicit = self.dt * (
-                alpha_v * (V_n[j+1, i] - 2*V_n[j,i] + V_n[j-1, i]) + beta_v * (V_n[j+1, i] - V_n[j-1, i])
-            )
-
-            L_Sv = self.dt * self._apply_mixed_derivative_correction(V_n, j, i, params)
-
-            rhs[idx] = V_n[j, i] + L_S_explicit + L_v_explicit + L_Sv  # REMOVED reaction_term
-
-        return rhs
-
-    def _build_rhs_modified_craig_sneyd_step_2(self, V_bar: np.ndarray, i: int, S_i: float, params:Dict) -> np.ndarray:
-        """Builds the right-hand side for the second step of Modified Craig-Sneyd scheme."""
-        r = params['r']
-        q = params.get('q', 0.0)
-        
-        N = self.N_v - 2
-        rhs = np.zeros(N)
-        
-        for idx in range(N):
-            j = idx + 1
-            v_j = self.v[j]
-
-            alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
-            beta_S = (r-q) *S_i/(2*self.dS)
-            L_S_explicit = (1-self.theta) * self.dt * (
-                alpha_S * (V_bar[j, i+1] - 2 * V_bar[j, i] + V_bar[j, i-1]) + beta_S * (V_bar[j, i+1] - V_bar[j, i-1])
-            )
-
-            L_Sv_term = 0.5 * self.dt * self._apply_mixed_derivative_correction(V_bar, j, i, params)
-
-            rhs[idx] = V_bar[j, i] + L_S_explicit + L_Sv_term
-
-        return rhs
-
-    def _build_rhs_modified_craig_sneyd_step_3(self, V_star:np.ndarray, V_bar: np.ndarray, j:int, v_j:float, params: Dict) -> np.ndarray:
-        """Builds the right-hand side for the third step of Modified Craig-Sneyd scheme."""
-        N = self.N_S - 2  # CHANGED FROM N_v - 2 (this is S-direction sweep!)
-        rhs = np.zeros(N)
-
-        for idx in range(N):
-            i = idx + 1
-
-            L_Sv_star = self._apply_mixed_derivative_correction(V_star, j, i, params)
-            L_Sv_bar = self._apply_mixed_derivative_correction(V_bar, j, i, params)
-
-            correction_term = self.dt * (L_Sv_star - 0.5 * L_Sv_bar)
-
-            rhs[idx] = V_star[j, i] + correction_term
-
-        return rhs
-
-    def _build_rhs_modified_craig_sneyd_step_4(self, V_tilde:np.ndarray, V_star: np.ndarray, i:int, S_i:float, params:Dict) -> np.ndarray:
-        """Builds the right-hand side for the fourth step of Modified Craig-Sneyd scheme."""
-        N = self.N_v - 2
-        rhs = np.zeros(N)
-        
-        for idx in range(N):
-            j = idx + 1
-            rhs[idx] = V_tilde[j, i]
-
-        return rhs
-
-    def _build_rhs_HV_step_1(self, V_n: np.ndarray, j:int, v_j:float, params: Dict, gamma:float) -> np.ndarray:
-        """Builds the right-hand side for the first step of Hundsdorfer-Verwer scheme."""
-        r = params['r']
-        q = params.get('q', 0.0)
-        kappa = params['kappa']
-        theta_v = params['theta']
-        xi = params['xi']
-
-        N = self.N_S - 2
-        rhs = np.zeros(N)
-        
-        for idx in range(N):
-            i = idx + 1
-            S_i = self.S[i]
-
-            alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
-            beta_S = (r - q) * S_i / (2 * self.dS)
-            L_S_explicit = (1-self.theta) * self.dt * (
-                alpha_S * (V_n[j, i+1] - 2 * V_n[j, i] + V_n[j, i-1]) + beta_S * (V_n[j, i+1] - V_n[j, i-1])
-            )
-
-            alpha_v = 0.5 * xi**2 * v_j / self.dv**2
-            beta_v = kappa * (theta_v - v_j) / (2 * self.dv)
-
-            L_v_explicit = self.dt * (
-                alpha_v * (V_n[j+1, i] - 2*V_n[j,i] + V_n[j-1, i]) + beta_v * (V_n[j+1, i] - V_n[j-1, i])
-            )
-
-            L_Sv_term = gamma * self.dt * self._apply_mixed_derivative_correction(V_n, j, i, params)
-
-            rhs[idx] = V_n[j, i] + L_S_explicit + L_v_explicit + L_Sv_term  # REMOVED reaction_term
-
-        return rhs
-
-    def _build_rhs_HV_step_2(self, V_bar: np.ndarray, i: int, S_i: float, params:Dict, gamma:float) -> np.ndarray:  # CHANGED V_star to V_bar
-        """Builds the right-hand side for the second step of Hundsdorfer-Verwer scheme."""
-        r = params['r']
-        q = params.get('q', 0.0)
-        
-        N = self.N_v - 2
-        rhs = np.zeros(N)
-
-        for idx in range(N):
-            j = idx + 1
-            v_j = self.v[j]
-
-            alpha_S = 0.5 * v_j * S_i**2 / self.dS**2
-            beta_S = (r-q) *S_i/(2*self.dS)
-            L_S_explicit = (1-self.theta) * self.dt * (
-                alpha_S * (V_bar[j, i+1] - 2 * V_bar[j, i] + V_bar[j, i-1]) + beta_S * (V_bar[j, i+1] - V_bar[j, i-1])  # CHANGED V_star to V_bar
-            )
-
-            L_Sv_term = (1 - gamma) * self.dt * self._apply_mixed_derivative_correction(V_bar, j, i, params)  # CHANGED gamma to (1-gamma) and V_star to V_bar
-            rhs[idx] = V_bar[j, i] + L_S_explicit + L_Sv_term  # CHANGED V_star to V_bar
-
-        return rhs
-
-    def _build_rhs_HV_step_3(self, V_star: np.ndarray, V_bar: np.ndarray, j:int, v_j:float, params: Dict, alpha:float) -> np.ndarray:
-        """Builds the right-hand side for the third step of Hundsdorfer-Verwer scheme."""
-        N = self.N_S - 2  # CHANGED FROM N_v - 2 (this is S-direction sweep!)
-        rhs = np.zeros(N)
-
-        for idx in range(N):
-            i = idx + 1
-
-            L_Sv_star = self._apply_mixed_derivative_correction(V_star, j, i, params)
-            L_Sv_bar = self._apply_mixed_derivative_correction(V_bar, j, i, params)
-            
-            correction_term = self.dt * (L_Sv_star - alpha * L_Sv_bar)
-
-            rhs[idx] = V_star[j, i] + correction_term
-
-        return rhs
-
-    def _build_rhs_HV_step_4(self, V_tilde:np.ndarray, V_star: np.ndarray, i:int, S_i:float, params:Dict, alpha:float) -> np.ndarray:
-        """Builds the right-hand side for the fourth step of Hundsdorfer-Verwer scheme."""
-        N = self.N_v - 2
-        rhs = np.zeros(N)
-        
-        for idx in range(N):
-            j = idx + 1
-            rhs[idx] = V_tilde[j, i]
-
-        return rhs
+    @staticmethod
+    def _copy_boundaries(src: np.ndarray, dst: np.ndarray) -> None:
+        """Copy boundary rows/columns from src into dst (in-place)."""
+        dst[0,  :] = src[0,  :]
+        dst[-1, :] = src[-1, :]
+        dst[:,  0] = src[:,  0]
+        dst[:, -1] = src[:, -1]
