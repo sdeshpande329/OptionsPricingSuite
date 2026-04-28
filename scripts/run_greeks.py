@@ -149,7 +149,7 @@ def compute_merton_greeks(row: pd.Series, merton_params: dict, n_s: int = 100, n
     return greeks
 
 
-def main(max_rows: Optional[int] = 20) -> None:
+def main(max_rows: Optional[int] = None) -> None:
     """Run Greeks computation and validation."""
     if not DATA_PATH.exists():
         raise FileNotFoundError(f"Could not find data file: {DATA_PATH}")
@@ -240,6 +240,7 @@ def main(max_rows: Optional[int] = 20) -> None:
     print("Greeks Comparison Statistics:")
     print("-" * 60)
 
+    summary_data = []
     for model_name, prefix in [("Black-Scholes", "bs_"), ("Heston", "heston_"), ("Merton", "merton_")]:
         print(f"\n{model_name}:")
         for greek in ["delta", "gamma", "vega", "theta"]:
@@ -252,6 +253,19 @@ def main(max_rows: Optional[int] = 20) -> None:
                 mae = errors.abs().mean()
                 rmse = np.sqrt((errors ** 2).mean())
                 print(f"  {greek.capitalize():8s}: MAE = {mae:.6f}, RMSE = {rmse:.6f}")
+                summary_data.append({
+                    "model": model_name,
+                    "greek": greek,
+                    "mae": mae,
+                    "rmse": rmse,
+                    "n_samples": valid.sum()
+                })
+
+    # Save summary statistics
+    summary_df = pd.DataFrame(summary_data)
+    summary_path = RESULTS_DIR / "greeks_summary_statistics.csv"
+    summary_df.to_csv(summary_path, index=False)
+    print(f"\nSummary statistics saved to: {summary_path}")
 
 
 if __name__ == "__main__":
