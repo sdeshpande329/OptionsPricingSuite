@@ -14,7 +14,18 @@ _VALID_SCHEMES = frozenset(
 
 class HestonModel:
     """Prices European options under the Heston stochastic volatility model."""
-    def __init__(self, r: float, q: float, kappa: float, theta: float, xi: float, rho: float, v0: float) -> None:
+    def __init__(
+        self,
+        r: float,
+        q: float,
+        kappa: float,
+        theta: float,
+        xi: float,
+        rho: float,
+        v0: float,
+        label: str = "",
+        _feller_warned: Optional[set] = None,
+    ) -> None:
         if not -1.0 <= rho <= 1.0:
             raise ValueError(f"rho must be in [-1, 1], got {rho}")
         if v0 <= 0.0:
@@ -35,11 +46,15 @@ class HestonModel:
         self.v0 = v0
 
         if not self.feller_condition_satisfied(kappa, theta, xi):
-            print(
-                f"Warning: Feller condition not satisfied: "
-                f"2*kappa*theta = {2 * kappa * theta:.4f} <= xi^2 = {xi ** 2:.4f}. "
-                f"Variance may reach zero."
-            )
+            prefix = f"   {label} " if label else ""
+            if _feller_warned is None or label not in _feller_warned:
+                print(
+                    f"Warning: {prefix}Feller condition not satisfied: "
+                    f"2*kappa*theta = {2 * kappa * theta:.4f} <= xi^2 = {xi ** 2:.4f}. "
+                    f"Variance may reach zero."
+                )
+                if _feller_warned is not None:
+                    _feller_warned.add(label)
     
     def get_pde_coefficients(self) -> Dict[str, float]:
         """Return the PDE coefficients required by ADISolver."""

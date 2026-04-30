@@ -27,8 +27,9 @@ from src.models.merton_jump_diffusion import (
 )
 
 RESULTS_DIR = REPO_ROOT / "data" / "results"
-RESULTS_PATH = RESULTS_DIR / "convergence_analysis_results.csv"
-SUMMARY_PATH = RESULTS_DIR / "convergence_summary_results.csv"
+CSV_DIR = RESULTS_DIR / "convergence_analysis"
+RESULTS_PATH = CSV_DIR / "convergence_analysis_results.csv"
+SUMMARY_PATH = CSV_DIR / "convergence_summary_results.csv"
 PLOTS_DIR = RESULTS_DIR / "convergence_plots"
 
 OPTION = {
@@ -499,7 +500,7 @@ def main() -> None:
     results_df = run_convergence_suite(studies)
     summary_df = summarize_convergence_results(results_df)
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    CSV_DIR.mkdir(parents=True, exist_ok=True)
     results_df.to_csv(RESULTS_PATH, index=False)
     summary_df.to_csv(SUMMARY_PATH, index=False)
     save_convergence_plots(results_df)

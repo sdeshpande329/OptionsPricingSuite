@@ -53,7 +53,7 @@ class HestonMonteCarlo:
             v_t = truncate_variance(v[:, t], self.min_variance, self.max_variance)
             st_dev_t = np.sqrt(v_t)
 
-            v[:, t+1] = v_t + self.kappa * (self.theta - v_t) * dt + self.xi + st_dev_t * dW_v[:,t] + 0.25 * self.xi**2 + (dW_v[:, t]**2 - dt)
+            v[:, t+1] = v_t + self.kappa * (self.theta - v_t) * dt + self.xi * st_dev_t * dW_v[:,t] + 0.25 * self.xi**2 * (dW_v[:, t]**2 - dt)
             v[:, t+1] = truncate_variance(v[:, t+1], self.min_variance, self.max_variance)
 
             S[:, t+1] = S[:, t] * np.exp((self.r - self.q - 0.5 * v_t) * dt + st_dev_t * dW_S[:, t])

@@ -16,7 +16,7 @@ if str(REPO_ROOT) not in sys.path:
 from src.models.heston import HestonModel
 
 DATA_PATH = REPO_ROOT / "data" / "options_metrics_processed" / "clean_options_data.csv"
-RESULTS_DIR = REPO_ROOT / "data" / "results"
+CALIBRATION_DIR = REPO_ROOT / "data" / "results" / "model_calibration"
 
 
 def infer_option_type(cp_flag: str) -> str:
@@ -40,9 +40,13 @@ class HestonCalibrator:
         self.market_data = None
         self.S0 = None
 
-    def load_and_prepare_data(self,data_path: str,max_rows: Optional[int] = None,option_type: str = "call",min_moneyness: float = 0.80,max_moneyness: float = 1.20,min_tau: float = 0.05,max_tau: float = 1.0) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def load_and_prepare_data(self,data_path: str,max_rows: Optional[int] = None,option_type: str = "call",min_moneyness: float = 0.80,max_moneyness: float = 1.20,min_tau: float = 0.05,max_tau: float = 1.0,ticker: Optional[str] = None) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Load and prepare market data for calibration."""
         df = pd.read_csv(data_path)
+        if ticker is not None and "security_name" in df.columns:
+            df = df[df["security_name"] == ticker].reset_index(drop=True)
+            if df.empty:
+                raise ValueError(f"No rows found for ticker '{ticker}' in {data_path}")
         if max_rows is not None:
             df = df.head(max_rows)
 
@@ -308,7 +312,7 @@ class HestonCalibrator:
             return False
         return True
 
-    def save_results(self, results: Dict, output_dir: Path) -> None:
+    def save_results(self, results: Dict, output_dir: Path, ticker: Optional[str] = None) -> None:
         """Save calibration results to CSV files."""
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -323,8 +327,11 @@ class HestonCalibrator:
         params_df["pde_elapsed"]   = results["pde_elapsed"]
         params_df["success"]       = results["success"]
         params_df["n_evaluations"] = results["n_evaluations"]
+        if ticker is not None:
+            params_df["ticker"] = ticker
 
-        params_file = output_dir / "heston_calibrated_parameters.csv"
+        suffix = f"_{ticker}" if ticker else ""
+        params_file = output_dir / f"heston_calibrated_parameters{suffix}.csv"
         params_df.to_csv(params_file, index=False)
         print(f"\nSaved parameters to: {params_file}")
 
@@ -342,18 +349,21 @@ class HestonCalibrator:
             "pde_pct_error": results["pde_errors"] / results["market_prices"] * 100,
         })
 
-        comparison_file = output_dir / "heston_price_comparison.csv"
+        comparison_suffix = f"_{ticker}" if ticker else ""
+        comparison_file = output_dir / f"heston_price_comparison{comparison_suffix}.csv"
         comparison_df.to_csv(comparison_file, index=False)
         print(f"Saved price comparison to: {comparison_file}")
 
 
-def main() -> Dict:
-    """Run Heston calibration on OptionMetrics data."""
+def main(ticker: Optional[str] = None) -> Dict:
+    """Run Heston calibration on OptionMetrics data for a specific ticker."""
     if not DATA_PATH.exists():
         raise FileNotFoundError(f"Data file not found: {DATA_PATH}")
 
     df_temp = pd.read_csv(DATA_PATH, nrows=1)
     r = float(df_temp["rate"].iloc[0]) / 100.0
+    label = ticker if ticker else "all securities"
+    print(f"Running Heston calibration for: {label}")
     print(f"Using risk-free rate: {r*100:.4f}%\n")
 
     calibrator = HestonCalibrator(
@@ -366,10 +376,11 @@ def main() -> Dict:
     S0, strikes, maturities, market_prices, weights = calibrator.load_and_prepare_data(
         data_path=str(DATA_PATH),
         option_type="call",
-        min_moneyness=0.80,  
+        min_moneyness=0.80,
         max_moneyness=1.20,
         min_tau=0.05,
-        max_tau=1.0,   
+        max_tau=1.0,
+        ticker=ticker,
     )
 
     avg_iv = calibrator.market_data["impl_volatility"].mean()
@@ -403,7 +414,7 @@ def main() -> Dict:
         verbose=2,
     )
 
-    calibrator.save_results(results, RESULTS_DIR)
+    calibrator.save_results(results, CALIBRATION_DIR, ticker=ticker)
     return results
 
 

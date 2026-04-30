@@ -15,7 +15,8 @@ from src.models.merton_jump_diffusion import EuropeanOption, MertonJumpDiffusion
 from scripts.run_merton_pide_pricing import IMEX_SCHEME, choose_grid_bounds, infer_option_type
 
 DATA_PATH = REPO_ROOT / "data" / "options_metrics_processed" / "clean_options_data.csv"
-RESULTS_DIR = REPO_ROOT / "data" / "results"
+CALIBRATION_DIR = REPO_ROOT / "data" / "results" / "model_calibration"
+
 
 DEFAULT_CP_FLAG = None
 DEFAULT_MAX_ROWS = 60
@@ -32,12 +33,18 @@ def load_calibration_data(
     cp_flag: Optional[str] = DEFAULT_CP_FLAG,
     tau_min: float = DEFAULT_TAU_MIN,
     tau_max: float = DEFAULT_TAU_MAX,
+    ticker: Optional[str] = None,
 ) -> pd.DataFrame:
     """Load and filter a tractable calibration sample."""
     if not DATA_PATH.exists():
         raise FileNotFoundError(f"Could not find processed data file: {DATA_PATH}")
 
     df = pd.read_csv(DATA_PATH)
+
+    if ticker is not None and "security_name" in df.columns:
+        df = df[df["security_name"] == ticker].reset_index(drop=True)
+        if df.empty:
+            raise ValueError(f"No rows found for ticker '{ticker}' in the dataset")
 
     if cp_flag is not None:
         df = df[df["cp_flag"].astype(str).str.upper() == cp_flag.upper()].copy()
@@ -230,13 +237,18 @@ def main(
     tau_max: float = DEFAULT_TAU_MAX,
     n_s: int = 120,
     n_t: int = 400,
+    ticker: Optional[str] = None,
 ) -> None:
     """Run a simple grid-search calibration for the Merton jump parameters."""
+    label = ticker if ticker else "all securities"
+    print(f"Running Merton calibration for: {label}")
+
     calibration_df = load_calibration_data(
         max_rows=max_rows,
         cp_flag=cp_flag,
         tau_min=tau_min,
         tau_max=tau_max,
+        ticker=ticker,
     )
     sample_summary = summarize_calibration_data(calibration_df)
     results_df = run_grid_search(
@@ -246,8 +258,9 @@ def main(
         n_t=n_t,
     )
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    results_path = RESULTS_DIR / "merton_jump_calibration_results.csv"
+    CALIBRATION_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = f"_{ticker}" if ticker else ""
+    results_path = CALIBRATION_DIR / f"merton_jump_calibration_results{suffix}.csv"
     results_df.to_csv(results_path, index=False)
 
     best = results_df.iloc[0]
