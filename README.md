@@ -6,7 +6,7 @@ Our goal is to develop a comprehensive option pricing and calibration suite that
 
 
 ## Startup Instructions:
-1. Create a virtual environment (instructions may differ based on your operating system)
+1. Create a virtual environment (instructions may differ based on your operating system).
 ```bash
 python -m venv venv
 ```
@@ -14,9 +14,24 @@ or
 ```sh
 python3 -m venv venv
 ```
-2. Make sure virtual environment is active, then update pip and install required packages
-```
+2. Make sure virtual environment is active, then update pip and install required packages.
+```sh
 pip install --upgrade pip && pip install -r requirements.txt
+```
+3. To pull data, you will need an account with Wharton Research Data Services (WRDS). For convenience, we have already pulled the data and stored it in the repository.
+4. To calibrate Heston and Jump-Diffusion Models, the current calibrated parameter csvs need to be removed. These can be found in the data/results/model_calibration folder.
+```sh
+rm -f data/results/model_calibration/heston_calibrated_parameters_*.csv \
+      data/results/model_calibration/heston_price_comparison_*.csv \
+      data/results/model_calibration/merton_jump_calibration_results_*.csv
+```
+5. Run main orchestration, which will price securities in parallel and end with convergence analysis. Make sure your current directory is the project root directory.
+```sh
+python main.py
+```
+or 
+```sh
+python3 main.py
 ```
 
 
@@ -34,6 +49,9 @@ OptionsPricingSuite
 │   │   ├── raw_rate_data.csv
 │   │   └── raw_spot_data.csv
 │   └── results
+│       ├── convergence_analysis
+│       │   ├── convergence_analysis_results.csv
+│       │   └── convergence_summary_results.csv
 │       ├── convergence_plots
 │       │   ├── black_scholes_convergence_spatial_refinement_error_vs_runtime.png
 │       │   ├── black_scholes_convergence_spatial_refinement_primary.png
@@ -53,21 +71,65 @@ OptionsPricingSuite
 │       │   ├── merton_jump_diffusion_convergence_temporal_refinement_primary.png
 │       │   ├── merton_jump_diffusion_stability_stress_lambda_1_00_error_vs_runtime.png
 │       │   └── merton_jump_diffusion_stability_stress_lambda_1_00_primary.png
-│       ├── black_scholes_finite_difference_PDE_terminal_output.JPG
-│       ├── black_scholes_monte_carlo_results.csv
-│       ├── black_scholes_pricing_results_crank_nicolson.csv
-│       ├── black_scholes_pricing_results_explicit.csv
-│       ├── black_scholes_pricing_results_implicit.csv
-│       ├── black_scholes_terminal_output.JPG
-│       ├── convergence_analysis_results.csv
-│       ├── convergence_summary_results.csv
-│       ├── heston_calibrated_parameters.csv
-│       ├── heston_price_comparison.csv
-│       ├── heston_pricing_results_craig-sneyd.csv
-│       ├── heston_pricing_results_hv.csv
-│       ├── heston_pricing_results_mcs.csv
-│       ├── merton_jump_calibration_results.csv
-│       └── merton_pide_pricing_results_imex_euler.csv
+│       ├── model_calibration
+│       │   ├── heston_calibrated_parameters_PLTR.csv
+│       │   ├── heston_calibrated_parameters_RUT.csv
+│       │   ├── heston_calibrated_parameters_SPX.csv
+│       │   ├── heston_calibrated_parameters_TSLA.csv
+│       │   ├── heston_price_comparison_PLTR.csv
+│       │   ├── heston_price_comparison_RUT.csv
+│       │   ├── heston_price_comparison_SPX.csv
+│       │   ├── heston_price_comparison_TSLA.csv
+│       │   ├── merton_jump_calibration_results_PLTR.csv
+│       │   ├── merton_jump_calibration_results_RUT.csv
+│       │   ├── merton_jump_calibration_results_SPX.csv
+│       │   └── merton_jump_calibration_results_TSLA.csv
+│       ├── pricing_results
+│       │   ├── pricing_PLTR_black_scholes_crank_nicolson.csv
+│       │   ├── pricing_PLTR_black_scholes_explicit.csv
+│       │   ├── pricing_PLTR_black_scholes_implicit.csv
+│       │   ├── pricing_PLTR_black_scholes_monte_carlo.csv
+│       │   ├── pricing_PLTR_heston_craig_sneyd.csv
+│       │   ├── pricing_PLTR_heston_douglas.csv
+│       │   ├── pricing_PLTR_heston_hundsdorfer_verwer.csv
+│       │   ├── pricing_PLTR_heston_modified_craig_sneyd.csv
+│       │   ├── pricing_PLTR_heston_monte_carlo.csv
+│       │   ├── pricing_PLTR_merton_imex_euler.csv
+│       │   ├── pricing_PLTR_merton_monte_carlo.csv
+│       │   ├── pricing_RUT_black_scholes_crank_nicolson.csv
+│       │   ├── pricing_RUT_black_scholes_explicit.csv
+│       │   ├── pricing_RUT_black_scholes_implicit.csv
+│       │   ├── pricing_RUT_black_scholes_monte_carlo.csv
+│       │   ├── pricing_RUT_heston_craig_sneyd.csv
+│       │   ├── pricing_RUT_heston_douglas.csv
+│       │   ├── pricing_RUT_heston_hundsdorfer_verwer.csv
+│       │   ├── pricing_RUT_heston_modified_craig_sneyd.csv
+│       │   ├── pricing_RUT_heston_monte_carlo.csv
+│       │   ├── pricing_RUT_merton_imex_euler.csv
+│       │   ├── pricing_RUT_merton_monte_carlo.csv
+│       │   ├── pricing_SPX_black_scholes_crank_nicolson.csv
+│       │   ├── pricing_SPX_black_scholes_explicit.csv
+│       │   ├── pricing_SPX_black_scholes_implicit.csv
+│       │   ├── pricing_SPX_black_scholes_monte_carlo.csv
+│       │   ├── pricing_SPX_heston_craig_sneyd.csv
+│       │   ├── pricing_SPX_heston_douglas.csv
+│       │   ├── pricing_SPX_heston_hundsdorfer_verwer.csv
+│       │   ├── pricing_SPX_heston_modified_craig_sneyd.csv
+│       │   ├── pricing_SPX_heston_monte_carlo.csv
+│       │   ├── pricing_SPX_merton_imex_euler.csv
+│       │   ├── pricing_SPX_merton_monte_carlo.csv
+│       │   ├── pricing_TSLA_black_scholes_crank_nicolson.csv
+│       │   ├── pricing_TSLA_black_scholes_explicit.csv
+│       │   ├── pricing_TSLA_black_scholes_implicit.csv
+│       │   ├── pricing_TSLA_black_scholes_monte_carlo.csv
+│       │   ├── pricing_TSLA_heston_craig_sneyd.csv
+│       │   ├── pricing_TSLA_heston_douglas.csv
+│       │   ├── pricing_TSLA_heston_hundsdorfer_verwer.csv
+│       │   ├── pricing_TSLA_heston_modified_craig_sneyd.csv
+│       │   ├── pricing_TSLA_heston_monte_carlo.csv
+│       │   ├── pricing_TSLA_merton_imex_euler.csv
+│       │   └── pricing_TSLA_merton_monte_carlo.csv
+│       └── pricing_summary.csv
 ├── docs
 │   ├── reference_papers
 │   │   ├── A Finite Difference Scheme for Option Pricing in Jump Diffusion and Exponential Lévy Models.pdf
@@ -75,6 +137,8 @@ OptionsPricingSuite
 │   │   └── Calibration of Heston.pdf
 │   ├── CSE 6730 Checkpoint 1.pdf
 │   ├── CSE 6730 Checkpoint 2.pdf
+│   ├── Final_Presentation_Group_12.pdf
+│   ├── Final_Project_Group_12.pdf
 │   └── Literature Review.pdf
 ├── notebooks
 │   └── data_download.ipynb
@@ -84,6 +148,7 @@ OptionsPricingSuite
 │   ├── download_data.py
 │   ├── run_black_scholes_pricing.py
 │   ├── run_convergence_test.py
+│   ├── run_greeks.py
 │   ├── run_heston_pricing.py
 │   ├── run_merton_pide_pricing.py
 │   └── run_monte_carlo.py
@@ -111,8 +176,10 @@ OptionsPricingSuite
 │   │   ├── finite_difference.py
 │   │   ├── imex_schemes.py
 │   │   └── linear_solvers.py
-│   └── __init__.py
+│   ├── __init__.py
+│   └── parallel_processing.py
+├── main.py
 └── requirements.txt
 ```
 
-AI has been used thus far in the project for the purpose of ideating (specifically conducting feasibility analysis for ideas the group had come up with) and for enhancing the readability of the literature review and checkpoints. While coding, AI tools such as Claude, ChatGPT, and Cursor were used for debugging and adding documentation.
+AI has been used thus far in the project for the purpose of ideating (specifically conducting feasibility analysis for ideas the group had come up with) and for enhancing the readability of the literature review, checkpoints, and final report. While coding, AI tools such as Claude, ChatGPT, and Cursor were used for debugging and adding documentation.
