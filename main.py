@@ -12,8 +12,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from config.config import Config
 from src.parallel_processing import ParallelPricingQueue
-from scripts.calibrate_heston_params import main as calibrate_heston
-from scripts.calibrate_merton_jump_params import main as calibrate_merton
+from scripts.calibrate_heston_params import calibrate_all_securities as calibrate_heston_securities
+from scripts.calibrate_merton_jump_params import calibrate_all_securities as calibrate_merton_securities
 from scripts.run_convergence_test import main as convergence_test
 
 RESULTS_DIR = REPO_ROOT / "data" / "results"
@@ -23,27 +23,8 @@ CALIBRATION_DIR = RESULTS_DIR / "model_calibration"
 def calibrate_all_securities() -> None:
     """Run Heston and Merton calibrations for every security in Config.SECURITIES."""
     print("Calibration Phase")
-    for _, ticker in Config.SECURITIES:
-        print(f"\n  {ticker}")
-        heston_out = CALIBRATION_DIR / f"heston_calibrated_parameters_{ticker}.csv"
-        if heston_out.exists():
-            print(f"    Heston - {heston_out.name} already exists.")
-        else:
-            print(f"    Calibrating Heston...")
-            try:
-                calibrate_heston(ticker=ticker)
-            except Exception as exc:
-                print(f"  Heston Calibration failed for {ticker}: {exc}")
-
-        merton_out = CALIBRATION_DIR / f"merton_jump_calibration_results_{ticker}.csv"
-        if merton_out.exists():
-            print(f"    Merton - {merton_out.name} already exists.")
-        else:
-            print(f"    Calibrating Merton...")
-            try:
-                calibrate_merton(ticker=ticker)
-            except Exception as exc:
-                print(f"    Merton Calibration failed for {ticker}: {exc}")
+    calibrate_heston_securities(Config.SECURITIES, CALIBRATION_DIR)
+    calibrate_merton_securities(Config.SECURITIES, CALIBRATION_DIR)
 
 
 

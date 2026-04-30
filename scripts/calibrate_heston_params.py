@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from config.config import Config
 from src.models.heston import HestonModel
 
 DATA_PATH = REPO_ROOT / "data" / "options_metrics_processed" / "clean_options_data.csv"
@@ -40,15 +41,18 @@ class HestonCalibrator:
         self.market_data = None
         self.S0 = None
 
-    def load_and_prepare_data(self,data_path: str,max_rows: Optional[int] = None,option_type: str = "call",min_moneyness: float = 0.80,max_moneyness: float = 1.20,min_tau: float = 0.05,max_tau: float = 1.0,ticker: Optional[str] = None) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def load_and_prepare_data(self, data_path: str, max_calibration_rows: Optional[int] = 75,
+                              option_type: str = "call", min_moneyness: float = 0.80,
+                              max_moneyness: float = 1.20, min_tau: float = 0.05,
+                              max_tau: float = 1.0, ticker: Optional[str] = None,
+                              n_moneyness_bins: int = 5,
+    ) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Load and prepare market data for calibration."""
         df = pd.read_csv(data_path)
         if ticker is not None and "security_name" in df.columns:
             df = df[df["security_name"] == ticker].reset_index(drop=True)
             if df.empty:
                 raise ValueError(f"No rows found for ticker '{ticker}' in {data_path}")
-        if max_rows is not None:
-            df = df.head(max_rows)
 
         S0 = float(df["spot_price"].iloc[0])
         print(f"Spot price: ${S0:.2f}")
@@ -74,11 +78,23 @@ class HestonCalibrator:
         ]
 
         if len(df) == 0:
-            raise ValueError(
-                "No options remain after filtering. Relax filter criteria."
-            )
+            raise ValueError("No options remain after filtering. Relax filter criteria.")
 
         df = df.drop_duplicates(subset=["strike_price", "tau (time to maturity)"])
+
+        # Stratified sample: bin by moneyness quantiles, then sample evenly across
+        # (moneyness_bin × maturity) cells so the calibration set spans the surface.
+        if max_calibration_rows is not None and len(df) > max_calibration_rows:
+            df["_moneyness_bin"] = pd.qcut(df["moneyness"], q=n_moneyness_bins, labels=False, duplicates="drop")
+            sampled = (
+                df.groupby(["tau (time to maturity)", "_moneyness_bin"], observed=True)
+                  .apply(lambda g: g.sample(n=1, random_state=42))
+                  .reset_index(drop=True)
+            )
+            if len(sampled) > max_calibration_rows:
+                sampled = sampled.sample(n=max_calibration_rows, random_state=42)
+            df = sampled.drop(columns=["_moneyness_bin"])
+            print(f"Stratified sample: {len(df)} options selected (from {max_calibration_rows} target)")
 
         strikes       = df["strike_price"].values
         maturities    = df["tau (time to maturity)"].values
@@ -108,7 +124,11 @@ class HestonCalibrator:
         kappa, theta, xi, rho, v0 = params
 
         if not self._check_constraints(kappa, theta, xi, rho, v0):
-            return 1e6 * np.ones(len(market_prices))
+            # Smooth penalty that grows with the Feller violation so the optimizer
+            # has a gradient to follow back into the feasible region.
+            feller_violation = max(0.0, xi ** 2 - 2.0 * kappa * theta)
+            penalty = 1e4 * (1.0 + feller_violation * 1e3)
+            return penalty * np.ones(len(market_prices))
 
         try:
             model_prices = np.array([
@@ -137,12 +157,17 @@ class HestonCalibrator:
                 if self.market_data is not None
                 else 0.20
             )
+            kappa0 = 2.0
+            theta0 = avg_iv ** 2
+            # Ensure the initial guess satisfies the Feller condition (2κθ > ξ²)
+            # so the optimizer starts in the feasible region.
+            xi0 = min(0.3, np.sqrt(2.0 * kappa0 * theta0) * 0.9)
             initial_guess = {
-                "kappa": 2.0,
-                "theta": avg_iv ** 2,
-                "xi":    0.3,
+                "kappa": kappa0,
+                "theta": theta0,
+                "xi":    xi0,
                 "rho":   -0.5,
-                "v0":    avg_iv ** 2,
+                "v0":    theta0,
             }
 
         x0 = np.array([
@@ -310,6 +335,9 @@ class HestonCalibrator:
             return False
         if not (-1.0 < rho < 1.0):
             return False
+        # Feller condition: ensures the variance process stays strictly positive
+        if 2.0 * kappa * theta <= xi ** 2:
+            return False
         return True
 
     def save_results(self, results: Dict, output_dir: Path, ticker: Optional[str] = None) -> None:
@@ -381,6 +409,7 @@ def main(ticker: Optional[str] = None) -> Dict:
         min_tau=0.05,
         max_tau=1.0,
         ticker=ticker,
+        max_calibration_rows=75,
     )
 
     avg_iv = calibrator.market_data["impl_volatility"].mean()
@@ -418,5 +447,19 @@ def main(ticker: Optional[str] = None) -> Dict:
     return results
 
 
+def calibrate_all_securities(securities: list, calibration_dir: Path) -> None:
+    """Run Heston calibration for every (id, ticker) pair, skipping existing outputs."""
+    for _, ticker in securities:
+        out = calibration_dir / f"heston_calibrated_parameters_{ticker}.csv"
+        if out.exists():
+            print(f"  [Heston]  {out.name} already exists — skipping.")
+            continue
+        print(f"  [Heston]  Calibrating {ticker}...")
+        try:
+            main(ticker=ticker)
+        except Exception as exc:
+            print(f"  [Heston]  Calibration failed for {ticker}: {exc}")
+
+
 if __name__ == "__main__":
-    results = main()
+    calibrate_all_securities(Config.SECURITIES, CALIBRATION_DIR)

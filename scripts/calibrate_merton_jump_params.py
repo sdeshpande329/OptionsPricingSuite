@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from config.config import Config
 from src.models.merton_jump_diffusion import EuropeanOption, MertonJumpDiffusionModel, MertonJumpParams
 from scripts.run_merton_pide_pricing import IMEX_SCHEME, choose_grid_bounds, infer_option_type
 
@@ -285,5 +286,19 @@ def main(
     print(f"Saved calibration results to: {results_path}")
 
 
+def calibrate_all_securities(securities: list, calibration_dir: Path) -> None:
+    """Run Merton calibration for every (id, ticker) pair, skipping existing outputs."""
+    for _, ticker in securities:
+        out = calibration_dir / f"merton_jump_calibration_results_{ticker}.csv"
+        if out.exists():
+            print(f"  [Merton]  {out.name} already exists — skipping.")
+            continue
+        print(f"  [Merton]  Calibrating {ticker}...")
+        try:
+            main(ticker=ticker)
+        except Exception as exc:
+            print(f"  [Merton]  Calibration failed for {ticker}: {exc}")
+
+
 if __name__ == "__main__":
-    main()
+    calibrate_all_securities(Config.SECURITIES, CALIBRATION_DIR)
